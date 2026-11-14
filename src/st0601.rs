@@ -1535,7 +1535,7 @@ mod tests {
     }
 
     fn get<'a>(v: &'a Value, name: &str) -> &'a Value {
-        v.field(name).unwrap_or_else(|| panic!("no field {name} in {v:?}"))
+        v.field(name).unwrap_or_else(|| panic!("missing field {name}"))
     }
 
     fn names(v: &Value) -> Vec<&'static str> {
@@ -2101,8 +2101,13 @@ mod tests {
         assert_eq!(names(&v), ["Local Id"]);
         let mut with_uuid = vec![5];
         with_uuid.extend([0; 16]);
-        for bad in [&with_uuid[..], &[0], &with_uuid[1..16], &[0x85]] {
-            assert!(is_invalid(&dec(143, bad)), "{bad:?}");
+        for (case, bad) in [
+            ("nonzero local ID with UUID", &with_uuid[..]),
+            ("missing UUID", &[0]),
+            ("short UUID", &with_uuid[1..16]),
+            ("incomplete local ID", &[0x85]),
+        ] {
+            assert!(is_invalid(&dec(143, bad)), "{case}");
         }
     }
 

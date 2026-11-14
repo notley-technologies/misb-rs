@@ -2,6 +2,7 @@
 //! the example built through pkg-config and CMake, linked both shared and
 //! static, then `make uninstall`. Linux only; skipped without make, a C
 //! compiler or pkg-config, and the CMake part without cmake.
+#![forbid(unsafe_code)]
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};

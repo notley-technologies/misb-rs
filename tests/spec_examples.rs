@@ -19,6 +19,7 @@
 //! significant bit with the printed example value, which for some items
 //! is the value before quantization (ST 0601 rounds, ST 1201 IMAPB
 //! truncates).
+#![forbid(unsafe_code)]
 mod common;
 
 use common::*;

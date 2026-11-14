@@ -10,6 +10,7 @@
 //! `MISB_FUZZ_SEED=<n>` picks a different random sequence. A failing input
 //! is saved under `target/fuzz-failures/`; once fixed, copy it into
 //! `tests/fuzz_regressions/<target>/` so it is replayed from then on.
+#![cfg_attr(not(feature = "capi"), forbid(unsafe_code))]
 mod harness;
 
 use harness::common::*;
@@ -32,15 +33,18 @@ fn root() -> &'static Path {
 /// Saved inputs for `target`, in name order.
 fn regressions(target: &str) -> Vec<(PathBuf, Vec<u8>)> {
     let dir = root().join("tests/fuzz_regressions").join(target);
-    let mut files: Vec<PathBuf> = match std::fs::read_dir(&dir) {
-        Ok(entries) => entries
-            .map(|e| e.unwrap().path())
-            .filter(|p| p.is_file() && p.file_name().map_or(false, |n| n != ".gitkeep"))
-            .collect(),
-        Err(_) => return Vec::new(),
-    };
-    files.sort();
-    files.into_iter().map(|p| (p.clone(), std::fs::read(&p).unwrap())).collect()
+    let entries = std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("cannot open {}: {e}", dir.display()));
+    let mut files = Vec::new();
+    for entry in entries {
+        let entry = entry.unwrap_or_else(|e| panic!("cannot read entry in {}: {e}", dir.display()));
+        if entry.file_name() != ".gitkeep" {
+            let path = entry.path();
+            let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+            files.push((path, bytes));
+        }
+    }
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+    files
 }
 
 fn random_bytes(rng: &mut Rng, len: usize) -> Vec<u8> {
@@ -160,9 +164,10 @@ fn fuzz_stream() {
     fuzz("stream", harness::stream, random_seeds(&[64, 256, 1024, 4096]), 1500);
 }
 
+#[cfg(feature = "capi")]
 #[test]
 fn fuzz_capi() {
-    fuzz("capi", harness::capi, random_seeds(&[64, 512, 2048]), 1000);
+    fuzz("capi", harness::capi::run, random_seeds(&[64, 512, 2048]), 1000);
 }
 
 /// The generator is only useful if what it builds gets past framing and
@@ -208,7 +213,8 @@ fn seeds_pass() {
     }
     for s in random_seeds(&[0, 1, 64, 4096]) {
         harness::stream(&s);
-        harness::capi(&s);
+        #[cfg(feature = "capi")]
+        harness::capi::run(&s);
     }
     harness::check_stream(&mixed_stream(), &Config::default(), 1);
 }

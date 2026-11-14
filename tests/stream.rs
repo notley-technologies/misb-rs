@@ -1,5 +1,6 @@
 //! The stream decoder: results that do not depend on how the input is
 //! split, `finish` and `reset`, independent decoders, and the counters.
+#![forbid(unsafe_code)]
 mod common;
 
 use common::*;

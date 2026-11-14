@@ -2,6 +2,7 @@
 //! golden of a published packet, and the encodings JSON needs for values
 //! it cannot carry directly. The unit tests hold the golden of every value
 //! kind built by hand.
+#![forbid(unsafe_code)]
 #![cfg(feature = "serde")]
 
 mod common;

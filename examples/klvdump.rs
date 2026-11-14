@@ -12,6 +12,7 @@
 //!           section 2.12.4), as carried by synchronous KLV (stream type
 //!           0x15); each metadata service gets its own decoder
 //! --quiet   print only the counters
+#![forbid(unsafe_code)]
 
 mod common;
 

@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## Unreleased
 
+### Changed
+
+- The C ABI is enabled by default. Rust consumers can disable default features to build the decoder with unsafe Rust forbidden.
+- `Config::max_total_items` now also bounds the combined number of ST 1010 matrix values in one packet. A matrix that would exceed this allowance is marked invalid, and decoding continues.
+- The throughput benchmark checks every synthetic run against the known number of bytes, packets and top-level items. The stable fuzz tests report an error if a regression corpus cannot be read.
+
 ### Added
 
 - Decoding of MISB ST 0601.19 UAS Datalink Local Set packets, all 143 tags, with values in engineering units and the checksum (tag 1) verified. Only ST 0601 is decoded at top level; packets with other universal keys are skipped and counted in `Stats::skipped_keys`.

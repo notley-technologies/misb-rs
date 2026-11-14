@@ -55,6 +55,7 @@ When updating the pinned revision, disable the local patch first. Refresh both l
 - **No I/O, no mutation.** The library never reads files or sockets and never changes the input. Keep it that way.
 - **Bounded memory.** Anything that buffers data or recurses into nested sets must have a limit in `Config` or a fixed cap. Hostile input must not be able to grow memory or recursion depth without bound.
 - **Hot path.** Run the throughput example before and after changes to the decoder and include the numbers in the pull request.
+- **Safe Rust.** The Rust-only build forbids unsafe code. Run `cargo test --locked --no-default-features` when changing the decoder.
 - **C ABI.** Within a `MISB_ABI_VERSION`, only add: new functions, new constants, and new fields at the end of structs. Never change or remove existing ones, and never reuse a standard or value kind code. Update `include/misb.h` alongside `src/capi.rs`; the tests check that the two agree.
 - **Generic KLV belongs in smpte-klv.** Keys, lengths, tags, set and pack framing and stream resynchronisation come from the [`smpte-klv`](https://github.com/notley-technologies/smpte-klv-rs) crate. Fix or extend SMPTE ST 336 behaviour there; this crate holds what MISB defines, such as tag tables, value mappings and the ST 0601 checksum.
 - **Scope.** The crate decodes MISB ST 0601 and the sets and value encodings ST 0601 embeds. Other standards are welcome where ST 0601 carries them (for example the sets of tags 95, 97, 98 and 99, which are kept as bytes today); decoding other top-level keys is out of scope.

@@ -1,6 +1,7 @@
 //! Structure-aware: the input builds a stream of ST 0601 packets with
 //! nested ST 0102, ST 0806, ST 0903, Segment and Amend sets, SDCC-FLPs,
 //! other keys and damage, decoded under tight limits.
+#![cfg_attr(not(feature = "capi"), forbid(unsafe_code))]
 #![no_main]
 
 #[path = "../../tests/harness/mod.rs"]

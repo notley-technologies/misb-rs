@@ -186,7 +186,7 @@ fn decoder() -> Result<misb::Decoder, misb::Error> {
 | `max_skip_bytes` | 1 MiB | not 0 | longest KLV triplet the decoder skips by its declared length (another key, or an oversized ST 0601 packet). A longer length is treated as damage (counted in `stats.bad_lengths`) and the decoder resynchronises on the next key after its first byte, so one bit error in a length cannot blind it for gigabytes. |
 | `max_depth` | 8 | at most 32 (`Config::MAX_DEPTH_LIMIT`) | deepest nesting of sets inside sets; 0 decodes the top level only. A deeper `Value::Set` is left empty with `Error::TooDeep`, and a deeper set decoded as a `Value::Struct` (inside ST 0806 and ST 0903) is `Value::Invalid`. ST 0601 nests about four levels at most. |
 | `max_items` | 65,536 | not 0 | items decoded from one set, and elements of one variable-length list or pack. A local set reports `Error::TooManyItems`. An oversized list or pack reports `Value::Invalid`. |
-| `max_total_items` | 65,536 | not 0 | items decoded from one ST 0601 packet, counting every nested set; parsing stops with `Error::TooManyItems` |
+| `max_total_items` | 65,536 | not 0 | items decoded from one ST 0601 packet, counting every nested set; parsing stops with `Error::TooManyItems`. The same limit separately caps ST 1010 matrix elements across the packet |
 | `verify_checksum` | true | | check the ST 0601 checksum; when off (and `reject_bad_checksum` is off) every packet reports `Checksum::NotApplicable` |
 | `reject_bad_checksum` | false | | the decoder drops packets whose checksum is `Mismatch` or `Missing` (see Checksum); implies `verify_checksum` |
 | `keep_raw` | true | | copy every item's value bytes into `Item::raw`. When off, `raw` is kept only for `Invalid` and `OutOfRange` values and for nested sets that stopped with an error, which saves most of a decoded packet's memory. |
@@ -238,47 +238,37 @@ let mut decoders: HashMap<u16, misb::Decoder> = HashMap::new();
 demux.push(&ts_bytes);
 for out in demux.outputs() {
     let decoder = decoders.entry(out.pid).or_default();
-    decoder.push(out.payload());
-    while let Some(packet) = decoder.next_packet() {
-        handle(out.pid, packet);
-    }
+    decoder.push_with(out.payload(), |packet| handle(out.pid, packet));
 }
 ```
 
-Sync KLV (stream type 0x15) wraps the metadata in ISO/IEC 13818-1 metadata access unit cells. An access unit can be fragmented across cells (always when it is over 65,535 bytes), and the fragments can span PES packets, so do not decode cells one by one. Either let mpegts strip the cell headers and push the joined payload:
+Sync KLV (stream type 0x15) carries ISO/IEC 13818-1 metadata access unit cells. When the PID carries one metadata service, `mpegts` can remove the cell headers. Feed each PES payload with `push_with` to drain packets as they complete.
 
 ```rust ignore
 demux.subscribe(Subscription::new(Select::Codec(Codec::KlvSync), Unit::Pes).strip_metadata_au())?;
 
 for out in demux.outputs() {
     let decoder = decoders.entry(out.pid).or_default();
-    decoder.push(out.payload());                  // the cells' data, joined in order
-    while let Some(packet) = decoder.next_packet() {
-        handle_at(out.pid, packet, out.pts);
-    }
+    decoder.push_with(out.payload(), |packet| handle_at(out.pid, packet, out.pts));
 }
 ```
 
-or split the cells with `misb::au_cells` and push each cell's data, in order, into that PID's decoder, which joins the fragments (use one decoder per metadata service if a PID carries several):
+For a PID carrying multiple services, keep the cell headers so the decoder can route fragments by service ID. Keep the decoder map across calls to the demultiplexer.
 
 ```rust ignore
+let mut services: HashMap<(u16, u8), misb::Decoder> = HashMap::new();
 demux.subscribe(Subscription::new(Select::Codec(Codec::KlvSync), Unit::Pes))?;
 
 for out in demux.outputs() {
-    let decoder = decoders.entry(out.pid).or_default();
     for cell in misb::au_cells(out.payload()) {
-        match cell {
-            Ok(cell) => decoder.push(cell.data),  // fragment 3 is a whole access unit; 2, 0.., 1 join up
-            Err(e) => eprintln!("PID {}: {e}", out.pid),
-        }
-    }
-    while let Some(packet) = decoder.next_packet() {
-        handle_at(out.pid, packet, out.pts);
+        let cell = cell?;
+        let decoder = services.entry((out.pid, cell.service_id)).or_default();
+        decoder.push_with(cell.data, |packet| handle_service(out.pid, cell.service_id, packet, out.pts));
     }
 }
 ```
 
-A packet comes out on the push that completes it, so `out.pts` in these loops is the PTS of the PES packet that carried its last bytes. To tie a packet to the PES packet where it started, record `decoder.stats().bytes` and `out.pts` before each push, take packets with `next_received()`, and look up the PES whose starting count is the largest one not above `Received::offset`.
+A packet comes out on the push that completes it, so `out.pts` is the PTS of the PES packet that carried its last bytes. To recover the starting PTS, record each decoder's `stats().bytes` and `out.pts` before each push. Drain it with `next_received()` and find the latest recorded byte count at or before `Received::offset` for that PID and service.
 
 ## C API
 
@@ -354,7 +344,7 @@ cargo run --release --example throughput                                   # abo
 cargo run --release --example throughput -- packets.klv --runs 50 --chunk whole,1316
 ```
 
-Prints min, mean, median, p95 and max per push size, in milliseconds, MB/s and packets/s. The benchmark fails if any run drops packets or produces different item counts or decoder statistics. `whole` feeds the buffer with `push_with`; the other sizes push chunk by chunk and drain after each push, as a live feed does. `--warmup N` sets the unmeasured runs and `--no-raw` decodes with `keep_raw` off.
+Prints min, mean, median, p95 and max per push size, in milliseconds, MB/s and packets/s. Each synthetic run must return every generated packet, byte and top-level item with clean decoder counters. With a file, each run must match the first run and report zero queue drops. `whole` feeds the buffer with `push_with`; the other sizes push chunk by chunk and drain after each push, as a live feed does. `--warmup N` sets the unmeasured runs and `--no-raw` decodes with `keep_raw` off.
 
 ## Tests
 
@@ -384,6 +374,8 @@ cargo +nightly fuzz run decode fuzz/corpus/decode my-packets/
 The stable runner saves a failing input under `target/fuzz-failures/`. Once it is fixed, add the input to `tests/fuzz_regressions/<target>/` so every test run replays it.
 
 ## Building
+
+The default `capi` feature exports ABI version 1. For a Rust-only build, set `default-features = false` on the `misb` dependency. Cargo then excludes the C adapter and the compiler forbids unsafe Rust throughout the decoder. The `serde` feature works in either build.
 
 The minimum supported Rust version is 1.70 for the library (`cargo check --lib`); the optional `serde` feature needs 1.71, the version its derive and proc-macro dependencies require.
 

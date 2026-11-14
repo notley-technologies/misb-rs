@@ -37,21 +37,30 @@ thread_local! {
     /// decode ([`Config::max_total_items`]). `usize::MAX`, no limit, outside
     /// [`decode_st0601`].
     static BUDGET: Cell<usize> = const { Cell::new(usize::MAX) };
+    // Sparse ST 1010 lists can expand well beyond their encoded length.
+    static MATRIX_VALUES: Cell<Option<usize>> = const { Cell::new(None) };
 }
 
 /// Sets the item budget for one packet and restores the previous one when
 /// dropped, also on unwind.
-struct Budget(usize);
+struct Budget {
+    previous_items: usize,
+    previous_matrix_values: Option<usize>,
+}
 
 impl Budget {
     fn start(items: usize) -> Budget {
-        Budget(BUDGET.try_with(|b| b.replace(items)).unwrap_or(usize::MAX))
+        Budget {
+            previous_items: BUDGET.with(|b| b.replace(items)),
+            previous_matrix_values: MATRIX_VALUES.with(|b| b.replace(Some(items))),
+        }
     }
 }
 
 impl Drop for Budget {
     fn drop(&mut self) {
-        let _ = BUDGET.try_with(|b| b.set(self.0));
+        BUDGET.with(|b| b.set(self.previous_items));
+        MATRIX_VALUES.with(|b| b.set(self.previous_matrix_values));
     }
 }
 
@@ -74,6 +83,19 @@ fn take_item() -> bool {
             }
         })
         .unwrap_or(true)
+}
+
+/// Reserve space for one matrix before expanding its lists. A rejected
+/// matrix leaves the allowance available for smaller ones in the packet.
+pub(crate) fn take_matrix_values(count: usize) -> bool {
+    MATRIX_VALUES.with(|budget| match budget.get() {
+        None => true,
+        Some(left) if count <= left => {
+            budget.set(Some(left - count));
+            true
+        }
+        Some(_) => false,
+    })
 }
 
 /// True when `key` is the ST 0601 UAS Datalink Local Set key. Byte 8, the
@@ -579,6 +601,30 @@ mod tests {
         let p = decode(&small, &c);
         assert_eq!((p.items.len(), p.error.clone()), (3, Some(Error::TooManyItems { count: 4, limit: 3 })));
         assert_eq!(decode_set(Standard::St0102, &[9, 0].repeat(10), 1, &c).items.len(), 10);
+    }
+
+    #[test]
+    fn matrix_values_share_a_packet_limit_across_nested_sets() {
+        let pack = [3, 0x09, 0]; // Three implicit zero coefficients.
+        let nested = [102, 3, 3, 0x09, 0];
+        let data = st0601_packet(&[(102, &pack), (100, &nested)]);
+        for limit in [5, 6, 5] {
+            let mut cfg = Config::default();
+            cfg.max_total_items = limit;
+            let packet = decode(&data, &cfg);
+            let coefficients = |value: &Value| {
+                value.field("Correlation Coefficient Values").and_then(Value::as_list).map(|list| list.len())
+            };
+            assert_eq!(coefficients(&packet.items[0].value), Some(3));
+            let child = &packet.items[1].value.as_set().unwrap().items[0];
+            if limit == 6 {
+                assert_eq!(coefficients(&child.value), Some(3));
+            } else {
+                assert!(matches!(child.value, Value::Invalid(_)));
+            }
+            assert_eq!(packet.checksum, Checksum::Valid);
+            assert_eq!(packet.items.last().unwrap().tag, 1);
+        }
     }
 
     #[test]

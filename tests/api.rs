@@ -1,6 +1,7 @@
 //! Behaviour of the public API: values and their accessors, tag lookups,
 //! packet health, configuration, the entry points, the stream decoder's
 //! extras, access unit cells and zero-length items.
+#![forbid(unsafe_code)]
 mod common;
 
 use common::*;

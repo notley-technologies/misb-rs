@@ -15,6 +15,7 @@
 //! chunk by chunk and drain after each push, as a live feed does. The input
 //! is read into memory first, so disk speed is not measured. Every run must
 //! decode the same packets; the benchmark stops if one does not.
+#![forbid(unsafe_code)]
 
 use misb::{checksum, st0601, Config, Decoder, Stats};
 use std::time::{Duration, Instant};
@@ -103,15 +104,25 @@ fn percentile(sorted: &[f64], p: f64) -> f64 {
 
 fn main() {
     let o = parse_args();
-    let (data, label) = match &o.file {
+    let (data, label, mut reference) = match &o.file {
         Some(path) => (
             fs::read(path).unwrap_or_else(|e| {
                 eprintln!("{path}: {e}");
                 process::exit(1)
             }),
             path.clone(),
+            None,
         ),
-        None => (synthetic(), "synthetic ST 0601 packets".to_string()),
+        None => {
+            let (data, packets) = synthetic();
+            // Each packet has 33 top-level items. Every tenth adds six more.
+            let items = 33 * packets + 6 * ((packets + 9) / 10);
+            let mut stats = Stats::default();
+            stats.packets = packets;
+            stats.bytes = data.len() as u64;
+            stats.packet_bytes = stats.bytes;
+            (data, "synthetic ST 0601 packets".to_string(), Some((stats, items)))
+        }
     };
     let mut cfg = Config::default();
     cfg.keep_raw = o.keep_raw;
@@ -120,7 +131,6 @@ fn main() {
     println!("runs: {} measured + {} warmup per chunk size, keep_raw: {}", o.runs, o.warmup, o.keep_raw);
 
     let passes = o.warmup.checked_add(o.runs).unwrap_or_else(|| usage("too many runs"));
-    let mut reference = None;
     let mut last = Stats::default();
     for &chunk in &o.chunks {
         let name = chunk.map_or("whole buffer (push_with)".to_string(), |n| format!("{n}-byte chunks"));
@@ -134,7 +144,8 @@ fn main() {
             match &reference {
                 None => reference = Some((stats.clone(), items)),
                 Some((expected, count)) if &stats != expected || items != *count => {
-                    eprintln!("{name}: run {i} produced different decoder counters or item counts");
+                    eprintln!("{name}: run {i} produced {items} top-level items, expected {count}");
+                    eprintln!("observed {stats:?}\nexpected {expected:?}");
                     process::exit(1);
                 }
                 Some(_) => {}
@@ -271,12 +282,12 @@ fn packet(i: u64) -> Vec<u8> {
 }
 
 /// About 30 MB of packets.
-fn synthetic() -> Vec<u8> {
+fn synthetic() -> (Vec<u8>, u64) {
     let mut data = Vec::with_capacity(32_000_000);
     let mut i = 0;
     while data.len() < 30_000_000 {
         data.extend(packet(i));
         i += 1;
     }
-    data
+    (data, i)
 }

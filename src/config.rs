@@ -78,7 +78,12 @@ pub struct Config {
     /// every set after it. [`max_items`](Config::max_items) applies to each set
     /// separately, so without this a packet of many nested sets could
     /// decode to about 50 times its size. Items of packs and series inside
-    /// an ST 0903 set are bounded by `max_items` per set. Default 65,536.
+    /// an ST 0903 set are bounded by `max_items` per set.
+    ///
+    /// This limit also caps the total number of declared ST 1010 standard
+    /// deviations and correlation coefficients across the packet. A matrix
+    /// that would exceed this separate allowance yields [`Value::Invalid`](crate::Value::Invalid).
+    /// Default 65,536.
     pub max_total_items: usize,
     /// Check the ST 0601 checksum (tag 1). When false, and
     /// [`reject_bad_checksum`](Config::reject_bad_checksum) is false too,

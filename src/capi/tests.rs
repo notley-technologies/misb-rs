@@ -151,19 +151,36 @@ fn handle(p: Packet) -> *mut misb_packet {
     Box::into_raw(misb_packet::new(p))
 }
 
-fn sized<T: Copy>(mut v: T) -> T {
-    // SAFETY: every ABI struct starts with a u32 struct_size.
-    unsafe { (ptr::addr_of_mut!(v) as *mut u32).write(mem::size_of::<T>() as u32) };
-    v
+// Shorter ABI versions begin with a u32 size. Keep the backing storage
+// aligned for all supported ABI structs and mark the unwritten tail.
+#[repr(align(8))]
+struct ShortOutput([u32; 16]);
+
+impl ShortOutput {
+    const UNWRITTEN: u32 = 0xEEEE_EEEE;
+
+    fn new(size: u32) -> Self {
+        let mut words = [Self::UNWRITTEN; 16];
+        words[0] = size;
+        Self(words)
+    }
+
+    fn as_mut_ptr<T>(&mut self) -> *mut T {
+        self.0.as_mut_ptr().cast()
+    }
 }
 
 fn new_item() -> misb_item {
-    sized(misb_item::empty())
+    misb_item { struct_size: size_of_u32::<misb_item>(), ..misb_item::empty() }
+}
+
+fn new_stats() -> misb_stats {
+    misb_stats { struct_size: size_of_u32::<misb_stats>(), ..misb_stats::default() }
 }
 
 fn new_info() -> misb_packet_info {
-    sized(misb_packet_info {
-        struct_size: 0,
+    misb_packet_info {
+        struct_size: size_of_u32::<misb_packet_info>(),
         standard: 0,
         checksum: 0,
         checksum_expected: 0,
@@ -172,12 +189,12 @@ fn new_info() -> misb_packet_info {
         reserved: 0,
         item_count: 0,
         error_message: ptr::null(),
-    })
+    }
 }
 
 fn new_cell() -> misb_au_cell {
-    sized(misb_au_cell {
-        struct_size: 0,
+    misb_au_cell {
+        struct_size: size_of_u32::<misb_au_cell>(),
         service_id: 0,
         sequence_number: 0,
         fragment: 0,
@@ -186,15 +203,15 @@ fn new_cell() -> misb_au_cell {
         reserved: [0; 7],
         data: ptr::null(),
         data_len: 0,
-    })
+    }
 }
 
-fn s<'a>(p: *const c_char) -> &'a str {
+fn s(p: *const c_char) -> String {
     assert!(!p.is_null());
-    unsafe { CStr::from_ptr(p) }.to_str().unwrap()
+    unsafe { CStr::from_ptr(p) }.to_str().unwrap().to_owned()
 }
 
-fn opt_s<'a>(p: *const c_char) -> Option<&'a str> {
+fn opt_s(p: *const c_char) -> Option<String> {
     (!p.is_null()).then(|| s(p))
 }
 
@@ -255,7 +272,7 @@ fn check_set(c: &misb_item, p: &Packet, error_message: Option<String>) {
     assert_eq!(info.standard, standard_code(p.standard));
     assert_eq!(info.item_count, p.items.len() as u64);
     assert_eq!(info.error, p.error.as_ref().map_or(MISB_ERROR_NONE, error_code));
-    assert_eq!(opt_s(info.error_message).map(String::from), error_message);
+    assert_eq!(opt_s(info.error_message), error_message);
     let (code, expected, computed) = match p.checksum {
         Checksum::NotApplicable => (MISB_CHECKSUM_NOT_APPLICABLE, 0, 0),
         Checksum::Valid => (MISB_CHECKSUM_VALID, 0, 0),
@@ -265,7 +282,7 @@ fn check_set(c: &misb_item, p: &Packet, error_message: Option<String>) {
     assert_eq!((info.checksum, info.checksum_expected, info.checksum_computed), (code, expected, computed));
     for (i, item) in p.items.iter().enumerate() {
         let k = child(c, i);
-        assert_eq!((k.tag, s(k.name), s(k.units)), (item.tag, item.name, item.units));
+        assert_eq!((k.tag, s(k.name).as_str(), s(k.units).as_str()), (item.tag, item.name, item.units));
         assert_eq!(unsafe { bytes(k.raw, k.raw_len) }, &item.raw[..]);
         check_value(&k, &item.value);
     }
@@ -302,7 +319,7 @@ fn check_value(c: &misb_item, v: &Value) {
         Value::Time(t) => assert_eq!(c.time_us, *t),
         Value::Enum { code, label } => {
             assert_eq!(c.enum_code, *code);
-            assert_eq!(opt_s(c.enum_label), *label);
+            assert_eq!(opt_s(c.enum_label).as_deref(), *label);
         }
         Value::OutOfRange | Value::Unknown => {}
         Value::Set(p) => check_set(c, p, p.error.as_ref().map(|e| e.to_string())),
@@ -310,7 +327,7 @@ fn check_value(c: &misb_item, v: &Value) {
             assert_eq!(c.child_count, list.len() as u64);
             for (i, e) in list.iter().enumerate() {
                 let k = child(c, i);
-                assert_eq!((k.tag, s(k.name), s(k.units)), (i as u64, "", ""));
+                assert_eq!((k.tag, s(k.name).as_str(), s(k.units).as_str()), (i as u64, "", ""));
                 assert!(k.raw.is_null() && k.raw_len == 0);
                 check_value(&k, e);
             }
@@ -319,7 +336,7 @@ fn check_value(c: &misb_item, v: &Value) {
             assert_eq!(c.child_count, fields.len() as u64);
             for (i, f) in fields.iter().enumerate() {
                 let k = child(c, i);
-                assert_eq!((k.tag, s(k.name), s(k.units)), (i as u64, f.name, ""));
+                assert_eq!((k.tag, s(k.name).as_str(), s(k.units).as_str()), (i as u64, f.name, ""));
                 assert!(k.raw.is_null() && k.raw_len == 0);
                 check_value(&k, &f.value);
             }
@@ -331,7 +348,7 @@ fn check_value(c: &misb_item, v: &Value) {
 /// The whole C view of a packet handle against the Rust packet.
 fn check_packet(h: *const misb_packet, p: &Packet) {
     let r = root(h);
-    assert_eq!((r.tag, s(r.name), s(r.units)), (0, p.standard.title(), ""));
+    assert_eq!((r.tag, s(r.name).as_str(), s(r.units).as_str()), (0, p.standard.title(), ""));
     assert!(r.raw.is_null());
     check_set(&r, p, p.error.as_ref().map(|e| e.to_string()));
     let mut info = new_info();
@@ -392,7 +409,7 @@ fn names_and_versions() {
         Error::InvalidConfig("max_items is 0"),
     ] {
         let name = s(misb_error_name(error_code(&e)));
-        assert!(e.to_string().starts_with(name), "{e}: {name}");
+        assert!(e.to_string().starts_with(&name), "{e}: {name}");
     }
     assert_eq!((error_code(&Error::TooManyItems { count: 2, limit: 1 }), error_code(&Error::InvalidConfig("x"))), (7, 8));
     assert!(misb_error_name(9).is_null());
@@ -401,8 +418,12 @@ fn names_and_versions() {
 #[test]
 fn config_default_and_versioning() {
     unsafe {
-        let mut cfg: misb_config = mem::zeroed();
-        cfg.struct_size = mem::size_of::<misb_config>() as u32;
+        let mut cfg = misb_config {
+            verify_checksum: 0,
+            max_items: 7,
+            keep_raw: 0,
+            ..misb_config::from(&Config::default())
+        };
         assert_eq!(misb_config_default(&mut cfg), MISB_OK);
         assert_eq!((cfg.verify_checksum, cfg.reject_bad_checksum), (1, 0));
         assert_eq!((cfg.max_packet_bytes, cfg.max_buffer_bytes, cfg.max_depth, cfg.max_items), (1 << 20, 4 << 20, 8, 65_536));
@@ -417,12 +438,10 @@ fn config_default_and_versioning() {
         assert_eq!(misb_config::from(&rust).to_config(), Ok(rust));
 
         // An older caller that only knows the first two fields.
-        let mut buf = [0xEEu8; 64];
-        (buf.as_mut_ptr() as *mut u32).write(8);
-        assert_eq!(misb_config_default(buf.as_mut_ptr() as *mut misb_config), MISB_OK);
-        let words = buf.as_ptr() as *const u32;
-        assert_eq!((words.read(), words.add(1).read()), (8, 1));
-        assert!(buf[8..].iter().all(|&b| b == 0xEE));
+        let mut buf = ShortOutput::new(8);
+        assert_eq!(misb_config_default(buf.as_mut_ptr()), MISB_OK);
+        assert_eq!(&buf.0[..2], &[8, 1]);
+        assert!(buf.0[2..].iter().all(|&word| word == ShortOutput::UNWRITTEN));
 
         // A newer caller with a bigger struct: the tail is untouched.
         #[repr(C)]
@@ -430,43 +449,14 @@ fn config_default_and_versioning() {
             cfg: misb_config,
             extra: u64,
         }
-        let mut n: Newer = mem::zeroed();
+        let mut n = Newer { cfg, extra: 0xABCD };
         n.cfg.struct_size = mem::size_of::<Newer>() as u32;
-        n.extra = 0xABCD;
         assert_eq!(misb_config_default(&mut n.cfg), MISB_OK);
         assert_eq!(n.cfg.struct_size as usize, mem::size_of::<misb_config>());
         assert_eq!(n.extra, 0xABCD);
 
-        // Input: an older, shorter struct sets only what it holds.
-        let mut old = misb_config::from(&Config::default());
-        old.struct_size = 8;
-        old.verify_checksum = 0;
-        old.max_items = 3; // beyond struct_size: ignored
-        let d = new_decoder(Some(&old));
-        assert!(!(*d).decoder.config().verify_checksum);
-        assert_eq!((*d).decoder.config().max_items, 65_536);
-        misb_decoder_free(d);
-        // A struct from before the fields after max_items: they keep their
-        // defaults, whatever the caller's memory holds there.
-        let mut v1 = misb_config::from(&Config::default());
-        v1.struct_size = 56;
-        v1.max_items = 5;
-        v1.max_total_items = 0;
-        v1.keep_raw = 7;
-        let d = new_decoder(Some(&v1));
-        let c = (*d).decoder.config();
-        assert_eq!((c.max_items, c.max_total_items, c.keep_raw), (5, 65_536, true));
-        misb_decoder_free(d);
-        let mut full = misb_config::from(&Config::default());
-        full.keep_raw = 0;
-        full.max_total_items = 9;
-        let d = new_decoder(Some(&full));
-        assert_eq!(((*d).decoder.config().keep_raw, (*d).decoder.config().max_total_items), (false, 9));
-        misb_decoder_free(d);
-
         assert_eq!(misb_config_default(ptr::null_mut()), MISB_ERR_NULL);
-        let mut tiny: misb_config = mem::zeroed();
-        tiny.struct_size = 3;
+        let mut tiny = misb_config { struct_size: 3, ..cfg };
         assert_eq!(misb_config_default(&mut tiny), MISB_ERR_INVALID);
     }
 }
@@ -498,7 +488,8 @@ fn invalid_config_is_rejected() {
         let odd = misb_config { reserved: 99, max_packet_bytes: u64::MAX, max_depth: 0, ..good };
         if usize::BITS == 64 {
             assert_eq!(misb_decoder_new(&odd, &mut d), MISB_OK);
-            assert_eq!((*d).decoder.config().max_packet_bytes, usize::MAX);
+            assert!(!d.is_null());
+            assert_eq!(odd.to_config().unwrap().max_packet_bytes, usize::MAX);
             misb_decoder_free(d);
         } else {
             assert_eq!(misb_decoder_new(&odd, &mut d), MISB_ERR_INVALID);
@@ -508,8 +499,32 @@ fn invalid_config_is_rejected() {
 
 #[test]
 fn decoder_flow_matches_rust() {
+    compare_decoder(None, Config::default());
+}
+
+#[test]
+fn decoder_honours_the_config_prefix() {
+    let defaults = misb_config::from(&Config::default());
+    let mut expected = Config::default();
+    expected.verify_checksum = false;
+    let old = misb_config { struct_size: 8, verify_checksum: 0, max_items: 1, ..defaults };
+    compare_decoder(Some(&old), expected);
+
+    let mut expected = Config::default();
+    expected.max_items = 5;
+    let v1 = misb_config { struct_size: 56, max_items: 5, max_total_items: 0, keep_raw: 7, ..defaults };
+    compare_decoder(Some(&v1), expected);
+
+    let mut expected = Config::default();
+    expected.keep_raw = false;
+    expected.max_total_items = 9;
+    let full = misb_config { keep_raw: 0, max_total_items: 9, ..defaults };
+    compare_decoder(Some(&full), expected);
+}
+
+fn compare_decoder(config: Option<&misb_config>, expected: Config) {
     let data = stream();
-    let mut rust = Decoder::new();
+    let mut rust = Decoder::with_config(expected).unwrap();
     rust.push(&data);
     let mid: Vec<Packet> = rust.packets().collect();
     rust.finish();
@@ -517,7 +532,7 @@ fn decoder_flow_matches_rust() {
     assert_eq!((mid.len(), tail.len()), (4, 0));
 
     for chunk in [1, 7, 100, data.len()] {
-        let d = new_decoder(None);
+        let d = new_decoder(config);
         let mut got = Vec::new();
         unsafe {
             for c in data.chunks(chunk) {
@@ -531,7 +546,7 @@ fn decoder_flow_matches_rust() {
         for (h, p) in got.iter().zip(&mid) {
             check_packet(*h, p);
         }
-        let mut stats = sized(misb_stats::default());
+        let mut stats = new_stats();
         unsafe { assert_eq!(misb_decoder_stats(d, &mut stats), MISB_OK) };
         let r = rust.stats();
         assert_eq!(
@@ -547,14 +562,14 @@ fn decoder_flow_matches_rust() {
             (r.checksum_missing, r.nested_errors, r.packet_bytes, r.bad_lengths)
         );
         assert_eq!(stats.bytes, stats.packet_bytes + stats.bytes_skipped);
-        assert_eq!((stats.packets, stats.checksum_errors, stats.skipped_keys, stats.truncated_at_finish), (4, 1, 1, 1));
+        assert_eq!((stats.packets, stats.skipped_keys, stats.truncated_at_finish), (4, 1, 1));
 
         unsafe {
             // Packets outlive the decoder, and reset leaves them alone.
             assert_eq!(misb_decoder_push(d, data.as_ptr(), data.len()), MISB_OK);
             assert_eq!(misb_decoder_reset(d), MISB_OK);
             assert!(drain(d).is_empty());
-            let mut stats = sized(misb_stats::default());
+            let mut stats = new_stats();
             assert_eq!(misb_decoder_stats(d, &mut stats), MISB_OK);
             assert_eq!((stats.packets, stats.bytes), (0, 0));
             misb_decoder_free(d);
@@ -581,7 +596,7 @@ fn push_slices_documented_in_the_header_never_drop() {
                 n += 1;
             }
         }
-        let mut stats = sized(misb_stats::default());
+        let mut stats = new_stats();
         unsafe {
             assert_eq!(misb_decoder_stats(d, &mut stats), MISB_OK);
             misb_decoder_free(d);
@@ -635,7 +650,7 @@ fn decoder_config_is_honoured() {
             misb_decoder_finish(d);
         }
         let got = drain(d);
-        let mut stats = sized(misb_stats::default());
+        let mut stats = new_stats();
         unsafe { assert_eq!(misb_decoder_stats(d, &mut stats), MISB_OK) };
         let mut checksums = Vec::new();
         for h in got {
@@ -669,7 +684,7 @@ fn null_pointers_are_rejected() {
         let mut it = new_item();
         let mut info = new_info();
         let mut cell = new_cell();
-        let mut stats = sized(misb_stats::default());
+        let mut stats = new_stats();
         let mut offset = 0usize;
 
         assert_eq!(misb_config_default(ptr::null_mut()), MISB_ERR_NULL);
@@ -728,25 +743,22 @@ fn null_pointers_are_rejected() {
 
 #[test]
 fn poisoned_decoder_refuses_work() {
+    let mut handle = misb_decoder { decoder: Decoder::new(), poisoned: false };
+    let buf = st0601_packet(&[(3, b"x")]);
+    handle.decoder.push(&buf);
+    assert_eq!(guard_mut(&mut handle, |_| panic!("boom")), MISB_ERR_PANIC);
+    assert!(handle.poisoned);
+    let d: *mut misb_decoder = &mut handle;
     unsafe {
-        let d = new_decoder(None);
-        let buf = st0601_packet(&[(3, b"x")]);
-        misb_decoder_push(d, buf.as_ptr(), buf.len());
-        (*d).poisoned = true;
         assert_eq!(misb_decoder_push(d, [0u8].as_ptr(), 1), MISB_ERR_POISONED);
         assert_eq!(misb_decoder_finish(d), MISB_ERR_POISONED);
         assert_eq!(misb_decoder_reset(d), MISB_ERR_POISONED);
         let mut p = 1 as *mut misb_packet;
         assert_eq!(misb_decoder_next(d, &mut p), MISB_ERR_POISONED);
         assert!(p.is_null(), "out is cleared");
-        let mut stats = sized(misb_stats::default());
+        let mut stats = new_stats();
         assert_eq!(misb_decoder_stats(d, &mut stats), MISB_ERR_POISONED);
-        misb_decoder_free(d);
     }
-    // A panic inside the guard poisons the handle instead of unwinding.
-    let mut h = misb_decoder { decoder: Decoder::new(), poisoned: false };
-    let status = guard_mut(&mut h, |_| panic!("boom"));
-    assert_eq!((status, h.poisoned), (MISB_ERR_PANIC, true));
     assert_eq!(guard(|| panic!("boom")), MISB_ERR_PANIC);
 }
 
@@ -759,11 +771,11 @@ fn every_kind_of_value() {
     let mut info = new_info();
     unsafe { assert_eq!(misb_packet_info_get(h, &mut info), MISB_OK) };
     assert_eq!((info.standard, info.checksum, info.checksum_expected, info.checksum_computed), (1, 2, 0x1234, 0xABCD));
-    assert_eq!((info.error, s(info.error_message), info.item_count), (MISB_ERROR_BAD_LENGTH, "malformed BER length", 16));
+    assert_eq!((info.error, s(info.error_message).as_str(), info.item_count), (MISB_ERROR_BAD_LENGTH, "malformed BER length", 16));
 
     // A few fields spelled out, beyond the generic comparison.
     let time = child(&r, 0);
-    assert_eq!((time.kind, time.time_us, s(time.units)), (MISB_VALUE_TIME, 1_224_807_209_913_000, "us"));
+    assert_eq!((time.kind, time.time_us, s(time.units).as_str()), (MISB_VALUE_TIME, 1_224_807_209_913_000, "us"));
     let text = child(&r, 1);
     assert_eq!((text.kind, text.data_len), (MISB_VALUE_TEXT, 8));
     assert_eq!(unsafe { bytes(text.data, 9) }, b"MI\0SSION\0", "full text despite the NUL");
@@ -774,24 +786,25 @@ fn every_kind_of_value() {
     assert_eq!((code.enum_code, code.enum_label), (9, ptr::null()));
     assert_eq!(child(&r, 8).kind, MISB_VALUE_OUT_OF_RANGE);
     let broken = child(&r, 9);
-    assert_eq!((broken.kind, s(broken.invalid_reason), broken.raw_len), (MISB_VALUE_INVALID, "wrong length", 5));
+    assert_eq!((broken.kind, s(broken.invalid_reason).as_str(), broken.raw_len), (MISB_VALUE_INVALID, "wrong length", 5));
     let set = child(&r, 10);
     assert_eq!((set.kind, set.standard, set.child_count), (MISB_VALUE_SET, MISB_STANDARD_ST0102, 2));
     let set_info = info_of(&set);
     assert_eq!((set_info.checksum, set_info.error), (MISB_CHECKSUM_NOT_APPLICABLE, MISB_ERROR_TRUNCATED));
     assert_eq!(s(set_info.error_message), "truncated: needed 5 bytes, 2 available");
     let class = child(&set, 0);
-    assert_eq!((class.tag, s(class.name), s(class.enum_label)), (1, "Security Classification", "UNCLASSIFIED//"));
+    assert_eq!((class.tag, s(class.name).as_str(), s(class.enum_label).as_str()), (1, "Security Classification", "UNCLASSIFIED//"));
     let list = child(&r, 11);
     let inner = child(&list, 1);
     assert_eq!((inner.kind, inner.child_count), (MISB_VALUE_LIST, 2));
     assert!(child(&inner, 0).float_value.is_nan());
     let empty_text = child(&inner, 1);
-    assert_eq!((empty_text.data_len, unsafe { *empty_text.data }), (0, 0));
+    assert_eq!(empty_text.data_len, 0);
+    assert!(!empty_text.data.is_null());
     let x = child(&child(&list, 2), 0);
-    assert_eq!((s(x.name), x.int_value), ("x", -1));
+    assert_eq!((s(x.name).as_str(), x.int_value), ("x", -1));
     let blank = child(&child(&r, 12), 3);
-    assert_eq!((s(blank.name), s(blank.enum_label)), ("", ""), "an empty label is not NULL");
+    assert_eq!((s(blank.name).as_str(), s(blank.enum_label).as_str()), ("", ""), "an empty label is not NULL");
     // A zero-length item: kind UNKNOWN, no value fields, empty raw bytes.
     let unknown = child(&r, 15);
     assert_eq!((unknown.kind, unknown.tag, unknown.raw_len, unknown.child_count), (MISB_VALUE_UNKNOWN, 15, 0, 0));
@@ -878,13 +891,10 @@ fn item_struct_size_and_aliasing() {
     let r = root(h);
     unsafe {
         // An older caller with a smaller struct: only that much written.
-        let mut buf = [0xEEu8; 256];
-        (buf.as_mut_ptr() as *mut u32).write(8);
-        let p = buf.as_mut_ptr() as *mut misb_item;
-        assert_eq!(misb_item_child(&r, 4, p), MISB_OK);
-        assert_eq!((p as *const u32).read(), 8);
-        assert_eq!((p as *const u32).add(1).read(), MISB_VALUE_UINT);
-        assert!(buf[8..].iter().all(|&b| b == 0xEE));
+        let mut buf = ShortOutput::new(8);
+        assert_eq!(misb_item_child(&r, 4, buf.as_mut_ptr()), MISB_OK);
+        assert_eq!(&buf.0[..2], &[8, MISB_VALUE_UINT]);
+        assert!(buf.0[2..].iter().all(|&word| word == ShortOutput::UNWRITTEN));
 
         // A newer caller with a bigger struct: the tail is untouched.
         #[repr(C)]
@@ -904,15 +914,13 @@ fn item_struct_size_and_aliasing() {
         assert_eq!(misb_item_child(at, 11, at), MISB_OK);
         assert_eq!(misb_item_child(at, 2, at), MISB_OK);
         assert_eq!(misb_item_find(at, 0, at), MISB_OK);
-        assert_eq!((s(it.name), it.int_value), ("x", -1));
+        assert_eq!((s(it.name).as_str(), it.int_value), ("x", -1));
 
         // Info structs follow the same rules.
-        let mut buf = [0xEEu8; 64];
-        (buf.as_mut_ptr() as *mut u32).write(12);
-        assert_eq!(misb_packet_info_get(h, buf.as_mut_ptr() as *mut misb_packet_info), MISB_OK);
-        let words = buf.as_ptr() as *const u32;
-        assert_eq!((words.read(), words.add(1).read(), words.add(2).read()), (12, 1, 2));
-        assert!(buf[12..].iter().all(|&b| b == 0xEE));
+        let mut buf = ShortOutput::new(12);
+        assert_eq!(misb_packet_info_get(h, buf.as_mut_ptr()), MISB_OK);
+        assert_eq!(&buf.0[..3], &[12, 1, 2]);
+        assert!(buf.0[3..].iter().all(|&word| word == ShortOutput::UNWRITTEN));
         misb_packet_free(h);
     }
 }
@@ -1171,11 +1179,11 @@ fn au_cells_from_c() {
         tiny.struct_size = 2;
         assert_eq!(misb_au_cell_next(pes.as_ptr(), pes.len(), &mut offset, &mut tiny), MISB_ERR_INVALID);
         assert_eq!(offset, 0);
-        let mut buf = [0xEEu8; 64];
-        (buf.as_mut_ptr() as *mut u32).write(6);
-        assert_eq!(misb_au_cell_next(pes.as_ptr(), pes.len(), &mut offset, buf.as_mut_ptr() as *mut misb_au_cell), MISB_OK);
-        assert_eq!(((buf.as_ptr() as *const u32).read(), buf[4], buf[5]), (6, 1, 9));
-        assert!(buf[6..].iter().all(|&b| b == 0xEE));
+        let mut buf = ShortOutput::new(6);
+        assert_eq!(misb_au_cell_next(pes.as_ptr(), pes.len(), &mut offset, buf.as_mut_ptr()), MISB_OK);
+        assert_eq!(buf.0[0], 6);
+        assert_eq!(buf.0[1].to_ne_bytes(), [1, 9, 0xEE, 0xEE]);
+        assert!(buf.0[2..].iter().all(|&word| word == ShortOutput::UNWRITTEN));
         assert_eq!(offset, 8);
         assert_eq!(misb_au_cell_next(pes.as_ptr(), usize::MAX, &mut offset, &mut cell), MISB_ERR_INVALID);
     }

@@ -2,6 +2,7 @@
 //! the `Config` limits. Covers nesting to and beyond the depth limit,
 //! declared lengths far beyond the input, item limits, and every tag of
 //! every standard with values of every short length.
+#![forbid(unsafe_code)]
 mod common;
 
 use common::*;

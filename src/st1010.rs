@@ -80,7 +80,8 @@
 //! - Memory: every count is checked against the bytes present before
 //!   anything is allocated, and a matrix needing more than
 //!   [`Config::max_items`](crate::Config::max_items) values in either list
-//!   is [`Value::Invalid`].
+//!   is [`Value::Invalid`]. Across all matrices in a packet, the sum of both
+//!   list lengths is limited by [`Config::max_total_items`].
 
 use crate::imapb::Imapb;
 use crate::klv::be_float;
@@ -243,6 +244,11 @@ fn parse(value: &[u8], cfg: &Config) -> Result<Value, &'static str> {
     // Each list's length is now at most max_items, so it fits in usize.
     let sigma_count = if pc.slen > 0 { n_wide as usize } else { 0 };
     let rho_count = if pc.clen > 0 { count as usize } else { 0 };
+
+    let total = sigma_count.checked_add(rho_count).ok_or("matrix value count exceeds addressable memory")?;
+    if !crate::registry::take_matrix_values(total) {
+        return Err("matrix values exceed Config::max_total_items for this packet");
+    }
 
     let mut fields = Vec::with_capacity(5);
     fields.push(Field { name: "Matrix Size", value: Value::Uint(n) });

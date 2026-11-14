@@ -29,6 +29,8 @@
 //!
 //! # Features and the C ABI
 //!
+//! - `capi` (default) exports the C ABI. Disable default features for a
+//!   Rust-only library compiled with `#![forbid(unsafe_code)]`.
 //! - `serde`: `Serialize` for [`Packet`], [`Item`], [`Value`], [`Field`],
 //!   [`Checksum`], [`Standard`], [`Error`], [`Stats`], [`Received`] and
 //!   [`Config`], and `Deserialize` for [`Config`]. The JSON format is
@@ -86,8 +88,10 @@
 // The README's Rust snippets compile as doctests.
 #![cfg_attr(doctest, doc = include_str!("../README.md"))]
 #![warn(missing_docs)]
-#![deny(unsafe_code)]
+#![cfg_attr(not(feature = "capi"), forbid(unsafe_code))]
+#![cfg_attr(feature = "capi", deny(unsafe_code))]
 
+#[cfg(feature = "capi")]
 #[doc(hidden)]
 pub mod capi;
 pub mod checksum;

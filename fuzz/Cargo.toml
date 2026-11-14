@@ -8,12 +8,14 @@ edition = "2021"
 cargo-fuzz = true
 
 [features]
+default = ["capi"]
+capi = ["misb/capi"]
 serde = ["misb/serde", "dep:serde_json"]
 
 [dependencies]
 serde_json = { version = "1", optional = true }
 libfuzzer-sys = "0.4"
-misb = { path = ".." }
+misb = { path = "..", default-features = false }
 
 # Not part of the main crate's build.
 #
@@ -43,6 +45,7 @@ bench = false
 
 [[bin]]
 name = "capi"
+required-features = ["capi"]
 path = "fuzz_targets/capi.rs"
 test = false
 doc = false

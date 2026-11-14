@@ -1003,8 +1003,8 @@ mod tests {
     }
 
     fn close(v: &Value, want: f64, tol: f64) {
-        let got = v.as_f64().unwrap_or_else(|| panic!("not a number: {v:?}"));
-        assert!((got - want).abs() <= tol, "{got} != {want} (tolerance {tol})");
+        let got = v.as_f64().expect("expected a numeric field");
+        assert!((got - want).abs() <= tol, "expected {want} within {tol}");
     }
 
     fn is_invalid(v: &Value) -> bool {
@@ -1012,11 +1012,11 @@ mod tests {
     }
 
     fn fields(v: &Value) -> &[Field] {
-        v.as_fields().unwrap_or_else(|| panic!("not a struct: {v:?}"))
+        v.as_fields().expect("expected a struct")
     }
 
     fn list(v: &Value) -> &[Value] {
-        v.as_list().unwrap_or_else(|| panic!("not a list: {v:?}"))
+        v.as_list().expect("expected a list")
     }
 
     fn names(v: &Value) -> Vec<&'static str> {
@@ -1392,7 +1392,7 @@ mod tests {
         // Location packs: only 10, 16 or 22 bytes; none is unknown.
         for n in [9usize, 11, 15, 17, 21, 23] {
             let v = one(tlv(17, &vec![0; n]));
-            assert!(is_invalid(&v), "{n} {v:?}");
+            assert!(is_invalid(&v), "unexpectedly accepted {n}-byte location");
         }
         assert_eq!(one(tlv(17, &[])), Value::Unknown);
         // The ST 0903 Invalid signal inside a pack: an unreachable corner.

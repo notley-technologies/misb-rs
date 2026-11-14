@@ -12,6 +12,7 @@
 //! --bytes   add each packet's bytes as received, in hex
 //!
 //! The JSON shape is described in the documentation of `misb::Value`.
+#![forbid(unsafe_code)]
 
 mod common;
 

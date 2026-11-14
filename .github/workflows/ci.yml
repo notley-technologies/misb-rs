@@ -33,6 +33,11 @@ jobs:
       # serde feature without declaring it.
       - if: runner.os == 'Linux'
         run: cargo test --locked
+      - name: Test the safe Rust decoder with and without serde
+        if: runner.os == 'Linux'
+        run: |
+          cargo test --locked --no-default-features
+          cargo test --locked --no-default-features --features serde
 
   i686:
     name: C ABI (32-bit Linux)
