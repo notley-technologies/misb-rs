@@ -1,0 +1,27 @@
+name: Feature request
+description: An ST 0601 tag or a set ST 0601 embeds to decode, a value to report differently, or an API addition.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: What do you need
+      description: The problem you are trying to solve, and what you would like the library to do.
+    validations:
+      required: true
+  - type: textarea
+    id: standard
+    attributes:
+      label: Standard and tag
+      description: The MISB standard document, its revision, and the tag or section that defines what you need (e.g. MISB ST 0601.19 tag 143, ST 0903.6 VTarget pack).
+  - type: textarea
+    id: example
+    attributes:
+      label: Example packet
+      description: If you have one, a hex dump of a KLV packet that uses it, or the example from the standard.
+      render: text
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: Anything you have tried or considered instead.

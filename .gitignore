@@ -1,0 +1,18 @@
+/target
+
+# Local override to build against a sibling smpte-klv-rs checkout.
+/.cargo/config.toml
+
+# Binary KLV and transport stream files stay out of the repo root. Anchored
+# to the root so that test vectors and fuzz regressions under tests/ can be
+# committed.
+/*.klv
+/*.bin
+/*.ts
+/*.m2ts
+
+# Editors and OS
+.idea/
+.vscode/
+*.swp
+.DS_Store

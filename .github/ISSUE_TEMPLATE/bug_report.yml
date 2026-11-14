@@ -1,0 +1,51 @@
+name: Bug report
+description: A value is decoded wrong or missed, or the library crashes or misbehaves.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. For security problems (crashes or memory growth on hostile input, memory safety in the C API), please use the Security tab instead of a public issue.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Crate version or commit.
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: dropdown
+    id: api
+    attributes:
+      label: API
+      options:
+        - Rust
+        - C
+        - Example tool (klvdump, json, ...)
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What the library reported or did, and what you expected instead. For a wrong value, name the standard and tag (e.g. ST 0601 tag 13).
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: Code, commands, and how the input was fed (whole buffer, chunks and chunk size, or metadata AU cells).
+      render: rust
+  - type: textarea
+    id: input
+    attributes:
+      label: Input
+      description: |
+        If you can share it, a hex dump of the KLV packet that shows the problem (`xxd -p packet.klv`), or describe the source: platform, encoder, standard versions.
+      render: text
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      placeholder: Ubuntu 24.04, x86_64, Rust 1.83

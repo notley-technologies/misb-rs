@@ -1,0 +1,53 @@
+[package]
+name = "misb"
+version = "0.1.0"
+edition = "2021"
+# The library; the optional serde feature needs 1.71, the rust-version of
+# serde_derive and the proc-macro crates it pulls in.
+rust-version = "1.70"
+description = "MISB ST 0601 UAS Datalink Local Set decoder, with the sets ST 0601 embeds and a C API"
+repository = "https://github.com/notley-technologies/misb-rs"
+readme = "README.md"
+keywords = ["misb", "klv", "st0601", "uas", "metadata"]
+categories = ["multimedia::video", "parser-implementations", "aerospace::unmanned-aerial-vehicles"]
+license = "Apache-2.0"
+# The smpte-klv package on crates.io is a different implementation.
+publish = false
+exclude = ["/*.ts", "/*.klv", "/target", "/fuzz"]
+
+[lib]
+# rlib for Rust users; cdylib and staticlib for the C ABI (include/misb.h).
+# As in mpegts, so a Rust project that depends on misb builds the two C
+# libraries too (see README, "Building").
+crate-type = ["rlib", "cdylib", "staticlib"]
+
+[features]
+## `serde::Serialize` for the decoded types, errors and statistics, and
+## `Serialize` and `Deserialize` for `Config`.
+serde = ["dep:serde"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"], optional = true }
+smpte-klv = { git = "https://github.com/notley-technologies/smpte-klv-rs", rev = "bc5346dd298fa061d6838f5b90ffbb952019dcd7" }
+
+[dev-dependencies]
+serde_json = "1"
+
+[[example]]
+name = "klvdump"
+
+[[example]]
+name = "json"
+required-features = ["serde"]
+
+[[example]]
+name = "throughput"
+
+[package.metadata.docs.rs]
+all-features = true
+
+# Applies when this crate is built on its own (C library, examples), not
+# when it is a dependency.
+[profile.release]
+lto = true
+codegen-units = 1

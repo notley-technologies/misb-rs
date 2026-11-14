@@ -1,0 +1,49 @@
+[package]
+name = "misb-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[features]
+serde = ["misb/serde", "dep:serde_json"]
+
+[dependencies]
+serde_json = { version = "1", optional = true }
+libfuzzer-sys = "0.4"
+misb = { path = ".." }
+
+# Not part of the main crate's build.
+#
+# misb fetches smpte-klv from GitHub. To fuzz against a sibling checkout of
+# smpte-klv-rs, use the same `.cargo/config.toml` patch as for the main
+# crate (see CONTRIBUTING.md): Cargo reads it from the parent directory, so
+# it applies to this workspace too.
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "decode"
+path = "fuzz_targets/decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "stream"
+path = "fuzz_targets/stream.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "capi"
+path = "fuzz_targets/capi.rs"
+test = false
+doc = false
+bench = false

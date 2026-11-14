@@ -1,0 +1,25 @@
+# Semantic versioning: same major version, and while the major version is
+# 0, same minor version too.
+set(PACKAGE_VERSION "@VERSION@")
+string(REPLACE "." ";" _misb_parts "${PACKAGE_VERSION}")
+list(GET _misb_parts 0 _misb_major)
+list(GET _misb_parts 1 _misb_minor)
+
+if(NOT PACKAGE_FIND_VERSION)
+  set(PACKAGE_VERSION_COMPATIBLE TRUE)
+elseif(PACKAGE_FIND_VERSION VERSION_GREATER PACKAGE_VERSION)
+  set(PACKAGE_VERSION_COMPATIBLE FALSE)
+elseif(NOT PACKAGE_FIND_VERSION_MAJOR EQUAL _misb_major)
+  set(PACKAGE_VERSION_COMPATIBLE FALSE)
+elseif(_misb_major EQUAL 0 AND NOT PACKAGE_FIND_VERSION_MINOR EQUAL _misb_minor)
+  set(PACKAGE_VERSION_COMPATIBLE FALSE)
+else()
+  set(PACKAGE_VERSION_COMPATIBLE TRUE)
+  if(PACKAGE_FIND_VERSION VERSION_EQUAL PACKAGE_VERSION)
+    set(PACKAGE_VERSION_EXACT TRUE)
+  endif()
+endif()
+
+unset(_misb_parts)
+unset(_misb_major)
+unset(_misb_minor)

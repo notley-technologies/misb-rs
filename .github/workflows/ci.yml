@@ -1,0 +1,164 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+      # On Linux this includes the C tests: layout, exported symbols, and
+      # `make install` followed by pkg-config and CMake builds.
+      - run: cargo test --locked --all-features
+      # Default features too: catches code, tests and examples that need the
+      # serde feature without declaring it.
+      - if: runner.os == 'Linux'
+        run: cargo test --locked
+
+  i686:
+    name: C ABI (32-bit Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: i686-unknown-linux-gnu
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y gcc-multilib
+      - run: cargo test --locked --all-features --target i686-unknown-linux-gnu --lib --test c_abi --test robustness --test stream
+
+  throughput:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Decode the synthetic stream at each push size
+        run: |
+          set -o pipefail
+          cargo run --release --locked --example throughput -- --runs 5 | tee -a "$GITHUB_STEP_SUMMARY"
+
+  warnings:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked --all-targets --all-features
+        env:
+          RUSTFLAGS: -D warnings
+      - run: cargo doc --locked --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: -D warnings
+      - name: relative links in the docs resolve, and test data is not ignored
+        run: |
+          for doc in README.md CONTRIBUTING.md; do
+            grep -o '](\([^)h#][^)]*\))' "$doc" | sed 's/^](\(.*\))$/\1/' | while read -r path; do
+              test -e "$path" || { echo "$doc links to $path, which does not exist"; exit 1; }
+            done
+          done
+          test -z "$(git check-ignore --no-index tests/fuzz_regressions/decode/x.bin tests/data/x.klv)"
+
+  msrv:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - rust: 1.70.0
+            features: ""
+          - rust: 1.71.0
+            features: --features serde
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+      - run: cargo check --locked --lib ${{ matrix.features }}
+
+  c-package-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: make install
+        run: make install PREFIX="$RUNNER_TEMP/prefix" CARGO_FLAGS=--locked
+      - name: build the example with CMake, shared and static
+        run: |
+          for static in OFF ON; do
+            cmake -S examples/c -B "build-$static" -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/prefix" -DMISB_STATIC=$static
+            cmake --build "build-$static"
+            "./build-$static/misb_dump" /dev/null
+          done
+      - name: make uninstall
+        run: |
+          make uninstall PREFIX="$RUNNER_TEMP/prefix"
+          test -z "$(find "$RUNNER_TEMP/prefix" -type f)"
+
+  fuzz:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [decode, stream, capi]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+      - name: fuzz for two minutes
+        run: |
+          cargo metadata --manifest-path fuzz/Cargo.toml --locked --format-version 1 > /dev/null
+          corpus="fuzz/corpus/${{ matrix.target }}"
+          mkdir -p "$corpus"
+          find "tests/fuzz_regressions/${{ matrix.target }}" -name '*.bin' -exec cp {} "$corpus" \;
+          cargo fuzz run --features serde --target x86_64-unknown-linux-gnu ${{ matrix.target }} -- -max_total_time=120 -max_len=16384
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: fuzz-${{ matrix.target }}
+          path: fuzz/artifacts
+
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/dependency-review-action@v5
+
+  # One check for branch protection to require, instead of every job.
+  ci-result:
+    name: CI result
+    if: always()
+    needs: [test, i686, throughput, warnings, msrv, c-package-macos, fuzz, dependency-review]
+    runs-on: ubuntu-latest
+    steps:
+      - name: all jobs passed
+        run: |
+          echo '${{ toJSON(needs) }}' | jq -e '
+            to_entries | all(.value.result == "success" or
+              (.key == "dependency-review" and .value.result == "skipped" and env.GITHUB_EVENT_NAME != "pull_request"))
+          '

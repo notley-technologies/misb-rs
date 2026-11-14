@@ -1,0 +1,23 @@
+# CMake package for misb, installed by `make install`.
+#
+#   find_package(misb 0.1 REQUIRED)
+#   target_link_libraries(app PRIVATE misb::misb)         # shared
+#   target_link_libraries(app PRIVATE misb::misb_static)  # static
+
+if(TARGET misb::misb)
+  return()
+endif()
+
+add_library(misb::misb SHARED IMPORTED)
+set_target_properties(misb::misb PROPERTIES
+  IMPORTED_LOCATION "@LIBDIR@/@SHARED@"
+  IMPORTED_SONAME "@SHARED@"
+  INTERFACE_INCLUDE_DIRECTORIES "@INCLUDEDIR@")
+
+# The static library includes the Rust standard library, which needs these
+# system libraries.
+add_library(misb::misb_static STATIC IMPORTED)
+set_target_properties(misb::misb_static PROPERTIES
+  IMPORTED_LOCATION "@LIBDIR@/libmisb.a"
+  INTERFACE_INCLUDE_DIRECTORIES "@INCLUDEDIR@"
+  INTERFACE_LINK_LIBRARIES "@NATIVE_LIBS_CMAKE@")

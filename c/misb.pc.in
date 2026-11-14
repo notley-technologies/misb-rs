@@ -1,0 +1,10 @@
+prefix=@PREFIX@
+libdir=@LIBDIR@
+includedir=@INCLUDEDIR@
+
+Name: misb
+Description: MISB ST 0601 UAS Datalink Local Set decoder
+Version: @VERSION@
+Libs: -L${libdir} -lmisb
+Libs.private: @NATIVE_LIBS@
+Cflags: -I${includedir}
