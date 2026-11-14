@@ -9,11 +9,7 @@ use std::ffi::CStr;
 // ---------------------------------------------------------------- helpers
 
 fn push_len(out: &mut Vec<u8>, n: usize) {
-    if n < 0x80 {
-        out.push(n as u8);
-    } else {
-        out.extend([0x82, (n >> 8) as u8, n as u8]);
-    }
+    smpte_klv::ber::encode_length(n as u64, smpte_klv::ber::BerForm::Minimal, out).unwrap();
 }
 
 /// An ST 0601 packet of (tag, value) items with a correct checksum last.
@@ -602,7 +598,10 @@ fn push_slices_documented_in_the_header_never_drop() {
     let stream = |big: usize, tiny_count: usize, rounds: usize| {
         let mut s = Vec::new();
         for _ in 0..rounds {
-            s.extend(st0601_packet(&[(3, &vec![b'x'; big])]));
+            let packet = st0601_packet(&[(3, &vec![b'x'; big])]);
+            let (_, used) = crate::decode_prefix(&packet, &Config::default()).unwrap();
+            assert_eq!(used, packet.len());
+            s.extend(packet);
             for _ in 0..tiny_count {
                 s.extend(&tiny);
             }

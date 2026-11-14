@@ -418,7 +418,8 @@ fn header_constants_match_rust() {
     assert!(header.contains(&version), "header version string is not {}", env!("CARGO_PKG_VERSION"));
     assert!(!header.contains(['\u{2013}', '\u{2014}']), "dashes in the header");
     // The Makefile reads the ABI version from this exact line.
-    assert!(header.contains(&format!("\n#define MISB_ABI_VERSION {MISB_ABI_VERSION}\n")));
+    let abi = format!("#define MISB_ABI_VERSION {MISB_ABI_VERSION}");
+    assert!(header.lines().any(|line| line == abi));
 }
 
 /// Function names the header declares.

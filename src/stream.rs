@@ -1024,8 +1024,11 @@ mod tests {
         let mut c = Config::default();
         c.max_skip_bytes = usize::MAX;
         let mut d = Decoder::with_config(c).unwrap();
+        // Leave room for the header under max_skip_bytes on both pointer widths.
+        let declared = (usize::MAX / 2) as u64;
         let mut s = st0601::KEY.to_vec();
-        s.extend([0x88, 0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
+        s.push(0x88);
+        s.extend(declared.to_be_bytes());
         d.push(&s);
         d.push(&[0u8; 10_000]);
         assert_eq!(d.stats().oversized, 1);
