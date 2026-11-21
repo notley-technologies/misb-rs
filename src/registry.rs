@@ -246,6 +246,20 @@ fn decode_items(standard: Standard, value: &[u8], depth: usize, cfg: &Config, co
     p
 }
 
+/// Decode one item of `standard` outside a packet, within the configured
+/// total item budget (the encoder checks whether an item's recorded bytes
+/// still decode to its value).
+#[cfg(feature = "encode")]
+pub(crate) fn decode_item_of(standard: Standard, tag: u64, value: &[u8], depth: usize, cfg: &Config) -> Item {
+    let _budget = Budget::start(cfg.max_total_items);
+    match standard {
+        Standard::St0601 => st0601::decode_item(tag, value, depth, cfg),
+        Standard::St0102 => st0102::decode_item(tag, value, depth, cfg),
+        Standard::St0806 => st0806::decode_item(tag, value, depth, cfg),
+        Standard::St0903 => st0903::decode_item(tag, value, depth, cfg),
+    }
+}
+
 /// Build an item from its decoded value and its bytes. [`Item::raw`] gets a
 /// copy of the bytes unless [`Config::keep_raw`] is off and the value
 /// decoded validly: [`Value::Invalid`] and [`Value::OutOfRange`] values and

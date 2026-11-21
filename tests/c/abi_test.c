@@ -20,6 +20,10 @@ static void layout(void) {
     S(misb_packet_info)
     S(misb_item)
     S(misb_au_cell)
+    S(misb_encode_options)
+    S(misb_encode_error)
+    S(misb_security)
+    S(misb_utc)
     F(misb_config, struct_size)
     F(misb_config, verify_checksum)
     F(misb_config, reject_bad_checksum)
@@ -87,6 +91,46 @@ static void layout(void) {
     F(misb_au_cell, reserved)
     F(misb_au_cell, data)
     F(misb_au_cell, data_len)
+    F(misb_encode_options, struct_size)
+    F(misb_encode_options, policy)
+    F(misb_encode_options, order)
+    F(misb_encode_options, allow_legacy)
+    F(misb_encode_options, ascii_only)
+    F(misb_encode_options, reserved)
+    F(misb_encode_options, max_packet_bytes)
+    F(misb_encode_error, struct_size)
+    F(misb_encode_error, standard)
+    F(misb_encode_error, tag)
+    F(misb_encode_error, kind)
+    F(misb_encode_error, reserved)
+    F(misb_encode_error, reason)
+    F(misb_security, struct_size)
+    F(misb_security, classification)
+    F(misb_security, country_coding_method)
+    F(misb_security, object_country_coding_method)
+    F(misb_security, version)
+    F(misb_security, partial)
+    F(misb_security, classifying_country)
+    F(misb_security, sci_shi)
+    F(misb_security, caveats)
+    F(misb_security, releasing_instructions)
+    F(misb_security, classified_by)
+    F(misb_security, derived_from)
+    F(misb_security, classification_reason)
+    F(misb_security, declassification_date)
+    F(misb_security, marking_system)
+    F(misb_security, object_country_codes)
+    F(misb_security, comments)
+    F(misb_security, country_coding_method_date)
+    F(misb_security, object_country_coding_method_date)
+    F(misb_utc, struct_size)
+    F(misb_utc, year)
+    F(misb_utc, month)
+    F(misb_utc, day)
+    F(misb_utc, hour)
+    F(misb_utc, minute)
+    F(misb_utc, second)
+    F(misb_utc, micros)
 }
 
 static misb_status check(const char *what, misb_status status) {
@@ -102,6 +146,140 @@ static void expect(int ok, const char *what) {
         fprintf(stderr, "failed: %s\n", what);
         exit(1);
     }
+}
+
+static void enc_check(const char *what, misb_status s) {
+    if (s != MISB_OK) {
+        fprintf(stderr, "%s returned %d (%s)\n", what, (int)s, misb_status_string(s));
+        exit(1);
+    }
+}
+
+static void hexline(const char *label, const uint8_t *b, size_t n) {
+    size_t i;
+    printf("ENC %s ", label);
+    for (i = 0; i < n; i++) {
+        printf("%02X", b[i]);
+    }
+    printf("\n");
+}
+
+/* The encoder: a packet built through every setter, compared by
+ * tests/c_abi.rs with the Rust builder; errors, warnings, buffer sizes,
+ * re-encoding and MISP time. */
+static void encoder(void) {
+    misb_encode_options opts;
+    misb_encoder *e = NULL;
+    misb_security sec;
+    misb_encode_error err;
+    misb_utc utc;
+    misb_packet *p = NULL;
+    uint8_t set[64], packet[512], again[512];
+    size_t set_len = 0, len = 0, n = 0, count = 0;
+    uint64_t misp = 0, leap = 0;
+
+    memset(&opts, 0, sizeof opts);
+    opts.struct_size = sizeof opts;
+    enc_check("encode_options_default", misb_encode_options_default(&opts));
+    printf("ENC OPTIONS policy=%u order=%u max=%llu\n", opts.policy, opts.order, (unsigned long long)opts.max_packet_bytes);
+
+    memset(&sec, 0, sizeof sec);
+    sec.struct_size = sizeof sec;
+    sec.classification = 1;
+    sec.country_coding_method = 0x0D;
+    sec.classifying_country = "//US";
+    sec.object_country_coding_method = 0x0D;
+    sec.object_country_codes = "US";
+    enc_check("security_encode", misb_security_encode(&sec, set, sizeof set, &set_len, NULL));
+    hexline("SECURITY", set, set_len);
+    sec.classifying_country = NULL;
+    memset(&err, 0, sizeof err);
+    err.struct_size = sizeof err;
+    expect(misb_security_encode(&sec, set, sizeof set, &n, &err) == MISB_ERR_ENCODE, "a security set without tag 3");
+    printf("ENC SECURITY_ERROR std=%u tag=%llu kind=%u\n", err.standard, (unsigned long long)err.tag, err.kind);
+    sec.classifying_country = "//US";
+
+    memset(&utc, 0, sizeof utc);
+    utc.struct_size = sizeof utc;
+    utc.year = 2022;
+    utc.month = 7;
+    utc.day = 12;
+    utc.hour = 9;
+    utc.minute = 5;
+    utc.second = 3;
+    utc.micros = 700;
+    enc_check("misp_from_utc", misb_misp_from_utc(&utc, &misp));
+    printf("ENC MISP %llu\n", (unsigned long long)misp);
+
+    enc_check("encoder_new", misb_encoder_new(&opts, misp, &e));
+    enc_check("set_text", misb_encoder_set_text(e, 3, "MISSION01", 9));
+    enc_check("set_f64", misb_encoder_set_f64(e, 13, 60.176822966978335));
+    enc_check("set_special", misb_encoder_set_special(e, 23, MISB_SPECIAL_OFF_EARTH));
+    enc_check("set_code", misb_encoder_set_code(e, 34, 2));
+    enc_check("set_imapb", misb_encoder_set_imapb(e, 117, 1.0, 2));
+    enc_check("set_time", misb_encoder_set_time(e, 72, misp));
+    enc_check("set_int", misb_encoder_set_int(e, 136, 29));
+    enc_check("set_uint", misb_encoder_set_uint(e, 110, 19887));
+    enc_check("unknown", misb_encoder_unknown(e, 21));
+    enc_check("set_bytes", misb_encoder_set_bytes(e, 48, set, set_len));
+    enc_check("set_raw", misb_encoder_set_raw(e, 200, (const uint8_t *)"private", 7));
+    enc_check("set_f64 out of range indicator", misb_encoder_set_f64(e, 6, 25.0));
+    /* Rejections add nothing and say why. */
+    expect(misb_encoder_set_f64(e, 14, 181.0) == MISB_ERR_ENCODE, "longitude out of range");
+    memset(&err, 0, sizeof err);
+    err.struct_size = sizeof err;
+    enc_check("last_error", misb_encoder_last_error(e, &err));
+    printf("ENC ERROR std=%u tag=%llu kind=%u reason=%s\n", err.standard, (unsigned long long)err.tag, err.kind,
+           err.reason);
+    expect(misb_encoder_set_text(e, 4, "\xff", 1) == MISB_ERR_INVALID, "invalid UTF-8");
+    expect(misb_encoder_set_f64(e, 9999, 1.0) == MISB_ERR_ENCODE, "an unknown tag");
+    expect(misb_encoder_set_text(e, 3, "AGAIN", 5) == MISB_ERR_ENCODE, "a duplicate");
+    err.struct_size = sizeof err;
+    enc_check("last_error", misb_encoder_last_error(e, &err));
+    printf("ENC DUPLICATE kind=%u\n", err.kind);
+    expect(misb_encoder_set_special(e, 23, 99) == MISB_ERR_INVALID, "an unknown special");
+    enc_check("warning_count", misb_encoder_warning_count(e, &count));
+    printf("ENC WARNINGS %lu\n", (unsigned long)count);
+    err.struct_size = sizeof err;
+    enc_check("warning", misb_encoder_warning(e, 0, &err));
+    printf("ENC WARNING tag=%llu kind=%u\n", (unsigned long long)err.tag, err.kind);
+    expect(misb_encoder_warning(e, count, &err) == MISB_ERR_RANGE, "a warning past the last");
+    expect(misb_encoder_finish(e, NULL, 0, &len) == MISB_ERR_TOO_SMALL && len > 0, "a size query");
+    enc_check("finish", misb_encoder_finish(e, packet, sizeof packet, &len));
+    hexline("PACKET", packet, len);
+    expect(misb_encoder_last_error(e, &err) == MISB_EMPTY, "no error after a success");
+
+    /* Re-encoding the decoded packet gives the same bytes. */
+    enc_check("decode", misb_decode(packet, len, &p));
+    enc_check("encode_packet", misb_encode_packet(p, NULL, again, sizeof again, &n, NULL));
+    expect(n == len && memcmp(again, packet, n) == 0, "re-encoding");
+    misb_packet_free(p);
+
+    enc_check("reset", misb_encoder_reset(e, 1));
+    enc_check("set_version", misb_encoder_set_version(e, 6));
+    enc_check("finish", misb_encoder_finish(e, packet, sizeof packet, &len));
+    hexline("EMPTY", packet, len);
+    misb_encoder_free(e);
+    misb_encoder_free(NULL);
+
+    /* MISP time around the 2016 leap second. */
+    utc.year = 2016;
+    utc.month = 12;
+    utc.day = 31;
+    utc.hour = 23;
+    utc.minute = 59;
+    utc.second = 60;
+    utc.micros = 500000;
+    enc_check("misp_from_utc leap", misb_misp_from_utc(&utc, &leap));
+    memset(&utc, 0, sizeof utc);
+    utc.struct_size = sizeof utc;
+    enc_check("misp_to_utc", misb_misp_to_utc(leap, &utc));
+    printf("ENC LEAP %llu %04d-%02u-%02uT%02u:%02u:%02u.%06u\n", (unsigned long long)leap, utc.year, utc.month, utc.day,
+           utc.hour, utc.minute, utc.second, utc.micros);
+    enc_check("misp_from_posix_us", misb_misp_from_posix_us(1657616703000700LL, &misp));
+    printf("ENC POSIX %llu\n", (unsigned long long)misp);
+    printf("ENC VALID_UNTIL %lld\n", (long long)misb_leap_seconds_valid_until());
+    printf("ENC STATUS %s|%s\n", misb_status_string(MISB_ERR_ENCODE), misb_status_string(MISB_ERR_TOO_SMALL));
 }
 
 static void hex(const uint8_t *p, uint64_t n) {
@@ -341,6 +519,7 @@ int main(int argc, char **argv) {
            "new error names");
     expect(misb_decoder_push(NULL, NULL, 0) == MISB_ERR_NULL, "NULL decoder");
     printf("STATUS %s|%s\n", misb_status_string(MISB_ERR_PARSE), misb_status_string(42));
+    encoder();
     printf("DONE\n");
     return 0;
 }

@@ -331,7 +331,7 @@ fn header_defines() -> HashMap<String, i64> {
 fn header_constants_match_rust() {
     let defs = header_defines();
     let get = |name: &str| *defs.get(name).unwrap_or_else(|| panic!("{name} missing from header"));
-    let groups: [(&str, &[(&str, i64)]); 5] = [
+    let groups: [(&str, &[(&str, i64)]); 9] = [
         (
             "MISB_VALUE_",
             &[
@@ -391,6 +391,42 @@ fn header_constants_match_rust() {
                 ("MISB_ERR_PARSE", MISB_ERR_PARSE.into()),
                 ("MISB_ERR_PANIC", MISB_ERR_PANIC.into()),
                 ("MISB_ERR_POISONED", MISB_ERR_POISONED.into()),
+                ("MISB_ERR_ENCODE", MISB_ERR_ENCODE.into()),
+                ("MISB_ERR_TOO_SMALL", MISB_ERR_TOO_SMALL.into()),
+            ],
+        ),
+        (
+            "MISB_POLICY_",
+            &[("MISB_POLICY_STRICT", MISB_POLICY_STRICT.into()), ("MISB_POLICY_CLAMP", MISB_POLICY_CLAMP.into())],
+        ),
+        (
+            "MISB_ORDER_",
+            &[("MISB_ORDER_ASCENDING", MISB_ORDER_ASCENDING.into()), ("MISB_ORDER_CALLER", MISB_ORDER_CALLER.into())],
+        ),
+        (
+            "MISB_SPECIAL_",
+            &[
+                ("MISB_SPECIAL_OFF_EARTH", MISB_SPECIAL_OFF_EARTH.into()),
+                ("MISB_SPECIAL_OUT_OF_RANGE", MISB_SPECIAL_OUT_OF_RANGE.into()),
+                ("MISB_SPECIAL_BELOW_MINIMUM", MISB_SPECIAL_BELOW_MINIMUM.into()),
+                ("MISB_SPECIAL_ABOVE_MAXIMUM", MISB_SPECIAL_ABOVE_MAXIMUM.into()),
+            ],
+        ),
+        (
+            "MISB_ENCODE_ERR_",
+            &[
+                ("MISB_ENCODE_ERR_UNKNOWN_TAG", MISB_ENCODE_ERR_UNKNOWN_TAG.into()),
+                ("MISB_ENCODE_ERR_NOT_ALLOWED", MISB_ENCODE_ERR_NOT_ALLOWED.into()),
+                ("MISB_ENCODE_ERR_WRONG_TYPE", MISB_ENCODE_ERR_WRONG_TYPE.into()),
+                ("MISB_ENCODE_ERR_OUT_OF_RANGE", MISB_ENCODE_ERR_OUT_OF_RANGE.into()),
+                ("MISB_ENCODE_ERR_NOT_FINITE", MISB_ENCODE_ERR_NOT_FINITE.into()),
+                ("MISB_ENCODE_ERR_INVALID_CODE", MISB_ENCODE_ERR_INVALID_CODE.into()),
+                ("MISB_ENCODE_ERR_TOO_LONG", MISB_ENCODE_ERR_TOO_LONG.into()),
+                ("MISB_ENCODE_ERR_DUPLICATE", MISB_ENCODE_ERR_DUPLICATE.into()),
+                ("MISB_ENCODE_ERR_MISSING", MISB_ENCODE_ERR_MISSING.into()),
+                ("MISB_ENCODE_ERR_TOO_LARGE", MISB_ENCODE_ERR_TOO_LARGE.into()),
+                ("MISB_ENCODE_ERR_INVALID_OPTIONS", MISB_ENCODE_ERR_INVALID_OPTIONS.into()),
+                ("MISB_ENCODE_ERR_UNSUPPORTED", MISB_ENCODE_ERR_UNSUPPORTED.into()),
             ],
         ),
     ];
@@ -407,6 +443,7 @@ fn header_constants_match_rust() {
         ("MISB_ABI_VERSION", i64::from(MISB_ABI_VERSION)),
         ("MISB_OK", MISB_OK.into()),
         ("MISB_EMPTY", MISB_EMPTY.into()),
+        ("MISB_ENCODE_WARNING", MISB_ENCODE_WARNING.into()),
         ("MISB_VERSION_MAJOR", env!("CARGO_PKG_VERSION_MAJOR").parse().unwrap()),
         ("MISB_VERSION_MINOR", env!("CARGO_PKG_VERSION_MINOR").parse().unwrap()),
         ("MISB_VERSION_PATCH", env!("CARGO_PKG_VERSION_PATCH").parse().unwrap()),
@@ -457,7 +494,7 @@ fn exported_symbols_match_header() {
         .map(|s| s.trim_start_matches('_').to_string())
         .collect();
     let declared = header_functions();
-    assert_eq!(declared.len(), 26, "header functions: {declared:?}");
+    assert_eq!(declared.len(), 52, "header functions: {declared:?}");
     let missing: Vec<_> = declared.difference(&exported).collect();
     let extra: Vec<_> = exported.difference(&declared).collect();
     assert!(missing.is_empty(), "declared in the header but not exported: {missing:?}");
@@ -489,6 +526,10 @@ fn rust_layout() -> Vec<(String, usize)> {
         size!(misb_packet_info),
         size!(misb_item),
         size!(misb_au_cell),
+        size!(misb_encode_options),
+        size!(misb_encode_error),
+        size!(misb_security),
+        size!(misb_utc),
         field!(misb_config, struct_size),
         field!(misb_config, verify_checksum),
         field!(misb_config, reject_bad_checksum),
@@ -556,6 +597,46 @@ fn rust_layout() -> Vec<(String, usize)> {
         field!(misb_au_cell, reserved),
         field!(misb_au_cell, data),
         field!(misb_au_cell, data_len),
+        field!(misb_encode_options, struct_size),
+        field!(misb_encode_options, policy),
+        field!(misb_encode_options, order),
+        field!(misb_encode_options, allow_legacy),
+        field!(misb_encode_options, ascii_only),
+        field!(misb_encode_options, reserved),
+        field!(misb_encode_options, max_packet_bytes),
+        field!(misb_encode_error, struct_size),
+        field!(misb_encode_error, standard),
+        field!(misb_encode_error, tag),
+        field!(misb_encode_error, kind),
+        field!(misb_encode_error, reserved),
+        field!(misb_encode_error, reason),
+        field!(misb_security, struct_size),
+        field!(misb_security, classification),
+        field!(misb_security, country_coding_method),
+        field!(misb_security, object_country_coding_method),
+        field!(misb_security, version),
+        field!(misb_security, partial),
+        field!(misb_security, classifying_country),
+        field!(misb_security, sci_shi),
+        field!(misb_security, caveats),
+        field!(misb_security, releasing_instructions),
+        field!(misb_security, classified_by),
+        field!(misb_security, derived_from),
+        field!(misb_security, classification_reason),
+        field!(misb_security, declassification_date),
+        field!(misb_security, marking_system),
+        field!(misb_security, object_country_codes),
+        field!(misb_security, comments),
+        field!(misb_security, country_coding_method_date),
+        field!(misb_security, object_country_coding_method_date),
+        field!(misb_utc, struct_size),
+        field!(misb_utc, year),
+        field!(misb_utc, month),
+        field!(misb_utc, day),
+        field!(misb_utc, hour),
+        field!(misb_utc, minute),
+        field!(misb_utc, second),
+        field!(misb_utc, micros),
     ]
 }
 
@@ -634,6 +715,51 @@ fn compile(cc: &str, lib: &Path, source: &Path, exe: &Path) {
     assert!(compiled.success(), "{} failed to compile", source.display());
 }
 
+/// What `encoder()` in tests/c/abi_test.c must print, built with the Rust
+/// API.
+fn expected_encoder() -> Vec<String> {
+    use misb::encode::{Classification, Input, Security, St0601Builder};
+    use misb::st0601::Tag;
+    use misb::{LeapSeconds, MispTime};
+    let hexu = |b: &[u8]| b.iter().map(|x| format!("{x:02X}")).collect::<String>();
+    let set = Security::new(Classification::Unclassified, 0x0D, "//US", 0x0D, "US").encode().unwrap();
+    let misp = MispTime::from_utc("2022-07-12T09:05:03.000700Z".parse().unwrap(), LeapSeconds::builtin()).unwrap();
+    let mut b = St0601Builder::new(misp);
+    b.set(Tag::MissionId, "MISSION01").unwrap();
+    b.set(Tag::SensorLatitude, 60.176_822_966_978_335).unwrap();
+    b.set(Tag::FrameCenterLatitude, Input::OffEarth).unwrap();
+    b.set(Tag::IcingDetected, Input::Code(2)).unwrap();
+    b.set_imapb(Tag::SensorAzimuthRate, 1.0, 2).unwrap();
+    b.set(Tag::EventStartTime, misp).unwrap();
+    b.set(Tag::LeapSeconds, 29i64).unwrap();
+    b.set(Tag::TimeAirborne, 19_887u64).unwrap();
+    b.unknown(Tag::SlantRange).unwrap();
+    b.set(Tag::SecurityLocalSet, Input::Bytes(set.clone())).unwrap();
+    b.set_raw(200, b"private").unwrap();
+    b.set(Tag::PlatformPitchAngle, 25.0).unwrap();
+    let packet = b.finish().unwrap();
+    let mut empty = St0601Builder::new(MispTime::from_micros(1));
+    empty.version(6);
+    let leap = MispTime::from_utc("2016-12-31T23:59:60.5Z".parse().unwrap(), LeapSeconds::builtin()).unwrap();
+    let posix = MispTime::from_posix_utc_micros(1_657_616_703_000_700, LeapSeconds::builtin()).unwrap();
+    vec![
+        format!("ENC OPTIONS policy=0 order=0 max={}", misb::encode::DEFAULT_MAX_PACKET_BYTES),
+        format!("ENC SECURITY {}", hexu(&set)),
+        format!("ENC SECURITY_ERROR std={MISB_STANDARD_ST0102} tag=3 kind={MISB_ENCODE_ERR_MISSING}"),
+        format!("ENC MISP {}", misp.as_micros()),
+        format!("ENC ERROR std={MISB_STANDARD_ST0601} tag=14 kind={MISB_ENCODE_ERR_OUT_OF_RANGE} reason=value outside the item's range"),
+        format!("ENC DUPLICATE kind={MISB_ENCODE_ERR_DUPLICATE}"),
+        format!("ENC WARNINGS {}", b.warnings().len()),
+        format!("ENC WARNING tag=6 kind={MISB_ENCODE_WARNING}"),
+        format!("ENC PACKET {}", hexu(&packet)),
+        format!("ENC EMPTY {}", hexu(&empty.finish().unwrap())),
+        format!("ENC LEAP {} 2016-12-31T23:59:60.500000", leap.as_micros()),
+        format!("ENC POSIX {}", posix.as_micros()),
+        format!("ENC VALID_UNTIL {}", LeapSeconds::builtin().valid_until()),
+        "ENC STATUS value or packet rejected by the encoder|output buffer too small".to_string(),
+    ]
+}
+
 #[test]
 fn c_program_layout_and_behaviour() {
     if cfg!(all(windows, not(target_env = "msvc"))) {
@@ -675,8 +801,13 @@ fn c_program_layout_and_behaviour() {
         assert_eq!(c.get(key.as_str()), Some(offset), "{key}");
     }
 
+    // The encoder, as C drives it, writes what the Rust builder writes.
+    let enc: Vec<&str> = stdout.lines().filter(|l| l.starts_with("ENC ")).collect();
+    assert_eq!(enc, expected_encoder(), "C encoder output");
+
     // Behaviour: the C view of every packet is the Rust view.
-    let lines: Vec<&str> = stdout.lines().filter(|l| !l.starts_with("S ") && !l.starts_with("L ")).collect();
+    let lines: Vec<&str> =
+        stdout.lines().filter(|l| !l.starts_with("S ") && !l.starts_with("L ") && !l.starts_with("ENC ")).collect();
     let expected = expected_behaviour(&data);
     for (i, (got, want)) in lines.iter().zip(&expected).enumerate() {
         assert_eq!(got, want, "line {i}");

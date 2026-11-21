@@ -181,9 +181,12 @@ fn install_then_build_with_pkg_config_and_cmake() {
         }
         let project = work.join("needs-newer");
         std::fs::create_dir_all(&project).unwrap();
+        // The next minor version, which a 0.x release must not satisfy.
+        let minor: u32 = env!("CARGO_PKG_VERSION_MINOR").parse().unwrap();
+        let newer = format!("0.{}", minor + 1);
         std::fs::write(
             project.join("CMakeLists.txt"),
-            "cmake_minimum_required(VERSION 3.10)\nproject(t C)\nfind_package(misb 0.2 REQUIRED)\n",
+            format!("cmake_minimum_required(VERSION 3.10)\nproject(t C)\nfind_package(misb {newer} REQUIRED)\n"),
         )
         .unwrap();
         let refused = Command::new("cmake")
@@ -195,8 +198,9 @@ fn install_then_build_with_pkg_config_and_cmake() {
             .output()
             .unwrap();
         let why = String::from_utf8_lossy(&refused.stderr);
-        assert!(!refused.status.success(), "0.1 must not satisfy a request for 0.2");
-        assert!(why.contains("considered but not accepted") && why.contains("version: 0.1.0"), "{why}");
+        assert!(!refused.status.success(), "{} must not satisfy a request for {newer}", env!("CARGO_PKG_VERSION"));
+        let installed = format!("version: {}", env!("CARGO_PKG_VERSION"));
+        assert!(why.contains("considered but not accepted") && why.contains(&installed), "{why}");
     } else {
         eprintln!("skipping the CMake part: no cmake");
     }

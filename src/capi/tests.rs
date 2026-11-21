@@ -379,8 +379,10 @@ fn names_and_versions() {
         (MISB_ERR_PARSE, "not a complete ST 0601 packet"),
         (MISB_ERR_PANIC, "internal error"),
         (MISB_ERR_POISONED, "decoder unusable after an internal error"),
+        (MISB_ERR_ENCODE, "value or packet rejected by the encoder"),
+        (MISB_ERR_TOO_SMALL, "output buffer too small"),
         (12345, "unknown status"),
-        (-7, "unknown status"),
+        (-9, "unknown status"),
     ] {
         assert_eq!(s(misb_status_string(status)), text);
     }

@@ -1,0 +1,2875 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "oneOf": [
+    {
+      "required": [
+        "time",
+        "time_scale"
+      ]
+    },
+    {
+      "required": [
+        "time_us"
+      ]
+    }
+  ],
+  "properties": {
+    "interpolate": {
+      "additionalProperties": {
+        "enum": [
+          "hold",
+          "linear",
+          "angle",
+          "geodesic"
+        ]
+      },
+      "type": "object"
+    },
+    "items": {
+      "description": "Keys: the Tag variant name (listed), the tag number or the standard's name. null = unknown.",
+      "patternProperties": {
+        "^[0-9]+$": {}
+      },
+      "properties": {
+        "ActivePayloads": {
+          "description": "Tag 139: Active Payloads",
+          "oneOf": [
+            {
+              "description": "fields as the decoder names them (see the Tag documentation)",
+              "type": [
+                "object",
+                "array",
+                "integer"
+              ]
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "ActiveWavelengthList": {
+          "description": "Tag 121: Active Wavelength List",
+          "oneOf": [
+            {
+              "description": "fields as the decoder names them (see the Tag documentation)",
+              "type": [
+                "object",
+                "array",
+                "integer"
+              ]
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "AirbaseLocations": {
+          "description": "Tag 130: Airbase Locations",
+          "oneOf": [
+            {
+              "description": "fields as the decoder names them (see the Tag documentation)",
+              "type": [
+                "object",
+                "array",
+                "integer"
+              ]
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "AirfieldBarometricPressure": {
+          "description": "Tag 53: Airfield Barometric Pressure (mbar)",
+          "oneOf": [
+            {
+              "maximum": 5000.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "AirfieldElevation": {
+          "description": "Tag 54: Airfield Elevation (m)",
+          "oneOf": [
+            {
+              "maximum": 19000.0,
+              "minimum": -900.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "AlternatePlatformAltitude": {
+          "description": "Tag 69: Alternate Platform Altitude (m)",
+          "oneOf": [
+            {
+              "maximum": 19000.0,
+              "minimum": -900.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "AlternatePlatformEllipsoidHeight": {
+          "description": "Tag 76: Alternate Platform Ellipsoid Height (m)",
+          "oneOf": [
+            {
+              "maximum": 19000.0,
+              "minimum": -900.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "AlternatePlatformEllipsoidHeightExtended": {
+          "description": "Tag 105: Alternate Platform Ellipsoid Height Extended (m)",
+          "oneOf": [
+            {
+              "maximum": 40000.0,
+              "minimum": -900.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "AlternatePlatformHeading": {
+          "description": "Tag 71: Alternate Platform Heading (deg)",
+          "oneOf": [
+            {
+              "maximum": 360.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "AlternatePlatformLatitude": {
+          "description": "Tag 67: Alternate Platform Latitude (deg)",
+          "oneOf": [
+            {
+              "maximum": 90.0,
+              "minimum": -90.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "AlternatePlatformLongitude": {
+          "description": "Tag 68: Alternate Platform Longitude (deg)",
+          "oneOf": [
+            {
+              "maximum": 180.0,
+              "minimum": -180.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "AlternatePlatformName": {
+          "description": "Tag 70: Alternate Platform Name",
+          "oneOf": [
+            {
+              "maxLength": 127,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "AltitudeAgl": {
+          "description": "Tag 113: Altitude AGL (m)",
+          "oneOf": [
+            {
+              "maximum": 40000.0,
+              "minimum": -900.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "AmendLocalSet": {
+          "description": "Tag 101: Amend Local Set",
+          "oneOf": [
+            {
+              "description": "the nested set: ST 0102 items for tag 48, the decoder's JSON of a set, or {\"hex\": ..}",
+              "type": "object"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "BroadcastSource": {
+          "description": "Tag 108: Broadcast Source",
+          "oneOf": [
+            {
+              "maxLength": 127,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "CommunicationsMethod": {
+          "description": "Tag 135: Communications Method",
+          "oneOf": [
+            {
+              "maxLength": 127,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "CompositeImagingLocalSet": {
+          "description": "Tag 99: Composite Imaging Local Set",
+          "oneOf": [
+            {
+              "required": [
+                "hex"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "ControlCommand": {
+          "description": "Tag 115: Control Command",
+          "oneOf": [
+            {
+              "description": "fields as the decoder names them (see the Tag documentation)",
+              "type": [
+                "object",
+                "array",
+                "integer"
+              ]
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "ControlCommandVerificationList": {
+          "description": "Tag 116: Control Command Verification List",
+          "oneOf": [
+            {
+              "description": "fields as the decoder names them (see the Tag documentation)",
+              "type": [
+                "object",
+                "array",
+                "integer"
+              ]
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "CornerLatitudePoint1Full": {
+          "description": "Tag 82: Corner Latitude Point 1 (Full) (deg)",
+          "oneOf": [
+            {
+              "maximum": 90.0,
+              "minimum": -90.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "CornerLatitudePoint2Full": {
+          "description": "Tag 84: Corner Latitude Point 2 (Full) (deg)",
+          "oneOf": [
+            {
+              "maximum": 90.0,
+              "minimum": -90.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "CornerLatitudePoint3Full": {
+          "description": "Tag 86: Corner Latitude Point 3 (Full) (deg)",
+          "oneOf": [
+            {
+              "maximum": 90.0,
+              "minimum": -90.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "CornerLatitudePoint4Full": {
+          "description": "Tag 88: Corner Latitude Point 4 (Full) (deg)",
+          "oneOf": [
+            {
+              "maximum": 90.0,
+              "minimum": -90.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "CornerLongitudePoint1Full": {
+          "description": "Tag 83: Corner Longitude Point 1 (Full) (deg)",
+          "oneOf": [
+            {
+              "maximum": 180.0,
+              "minimum": -180.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "CornerLongitudePoint2Full": {
+          "description": "Tag 85: Corner Longitude Point 2 (Full) (deg)",
+          "oneOf": [
+            {
+              "maximum": 180.0,
+              "minimum": -180.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "CornerLongitudePoint3Full": {
+          "description": "Tag 87: Corner Longitude Point 3 (Full) (deg)",
+          "oneOf": [
+            {
+              "maximum": 180.0,
+              "minimum": -180.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "CornerLongitudePoint4Full": {
+          "description": "Tag 89: Corner Longitude Point 4 (Full) (deg)",
+          "oneOf": [
+            {
+              "maximum": 180.0,
+              "minimum": -180.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "CorrectionOffset": {
+          "description": "Tag 137: Correction Offset (us)",
+          "oneOf": [
+            {
+              "maximum": 9223372036854775807,
+              "minimum": -9223372036854775808,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "CountryCodes": {
+          "description": "Tag 122: Country Codes",
+          "oneOf": [
+            {
+              "description": "fields as the decoder names them (see the Tag documentation)",
+              "type": [
+                "object",
+                "array",
+                "integer"
+              ]
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "DensityAltitude": {
+          "description": "Tag 38: Density Altitude (m)",
+          "oneOf": [
+            {
+              "maximum": 19000.0,
+              "minimum": -900.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "DensityAltitudeExtended": {
+          "description": "Tag 103: Density Altitude Extended (m)",
+          "oneOf": [
+            {
+              "maximum": 40000.0,
+              "minimum": -900.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "DifferentialPressure": {
+          "description": "Tag 49: Differential Pressure (mbar)",
+          "oneOf": [
+            {
+              "maximum": 5000.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "EventStartTime": {
+          "description": "Tag 72: Event Start Time (us)",
+          "oneOf": [
+            {
+              "description": "MISP microseconds or an RFC 3339 instant",
+              "type": [
+                "integer",
+                "string"
+              ]
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "FrameCenterElevation": {
+          "description": "Tag 25: Frame Center Elevation (m)",
+          "oneOf": [
+            {
+              "maximum": 19000.0,
+              "minimum": -900.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "FrameCenterHeightAboveEllipsoid": {
+          "description": "Tag 78: Frame Center Height Above Ellipsoid (m)",
+          "oneOf": [
+            {
+              "maximum": 19000.0,
+              "minimum": -900.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "FrameCenterLatitude": {
+          "description": "Tag 23: Frame Center Latitude (deg)",
+          "oneOf": [
+            {
+              "maximum": 90.0,
+              "minimum": -90.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "FrameCenterLongitude": {
+          "description": "Tag 24: Frame Center Longitude (deg)",
+          "oneOf": [
+            {
+              "maximum": 180.0,
+              "minimum": -180.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "GenericFlagData": {
+          "description": "Tag 47: Generic Flag Data",
+          "oneOf": [
+            {
+              "description": "fields as the decoder names them (see the Tag documentation)",
+              "type": [
+                "object",
+                "array",
+                "integer"
+              ]
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "GeoRegistrationLocalSet": {
+          "description": "Tag 98: Geo-Registration Local Set",
+          "oneOf": [
+            {
+              "required": [
+                "hex"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "GroundRange": {
+          "description": "Tag 57: Ground Range (m)",
+          "oneOf": [
+            {
+              "maximum": 5000000.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "IcingDetected": {
+          "description": "Tag 34: Icing Detected",
+          "oneOf": [
+            {
+              "oneOf": [
+                {
+                  "enum": [
+                    0,
+                    1,
+                    2
+                  ],
+                  "type": "integer"
+                },
+                {
+                  "enum": [
+                    "Detector off",
+                    "No icing Detected",
+                    "Icing Detected"
+                  ],
+                  "type": "string"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "ImageCoordinateSystem": {
+          "description": "Tag 12: Image Coordinate System",
+          "oneOf": [
+            {
+              "maxLength": 127,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "ImageHorizonPixelPack": {
+          "description": "Tag 81: Image Horizon Pixel Pack",
+          "oneOf": [
+            {
+              "description": "fields as the decoder names them (see the Tag documentation)",
+              "type": [
+                "object",
+                "array",
+                "integer"
+              ]
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "ImageSourceSensor": {
+          "description": "Tag 11: Image Source Sensor",
+          "oneOf": [
+            {
+              "maxLength": 127,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "LaserPrfCode": {
+          "description": "Tag 62: Laser PRF Code",
+          "oneOf": [
+            {
+              "description": "fields as the decoder names them (see the Tag documentation)",
+              "type": [
+                "object",
+                "array",
+                "integer"
+              ]
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "LeapSeconds": {
+          "description": "Tag 136: Leap Seconds (s)",
+          "oneOf": [
+            {
+              "maximum": 2147483647,
+              "minimum": -2147483648,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "MiisCoreIdentifier": {
+          "description": "Tag 94: MIIS Core Identifier",
+          "oneOf": [
+            {
+              "description": "fields as the decoder names them (see the Tag documentation)",
+              "type": [
+                "object",
+                "array",
+                "integer"
+              ]
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "MissionId": {
+          "description": "Tag 3: Mission ID",
+          "oneOf": [
+            {
+              "maxLength": 127,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "NumberOfNavsatsInView": {
+          "description": "Tag 123: Number of NAVSATs in View",
+          "oneOf": [
+            {
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "OffsetCornerLatitudePoint1": {
+          "description": "Tag 26: Offset Corner Latitude Point 1 (deg)",
+          "oneOf": [
+            {
+              "maximum": 0.075,
+              "minimum": -0.075,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "OffsetCornerLatitudePoint2": {
+          "description": "Tag 28: Offset Corner Latitude Point 2 (deg)",
+          "oneOf": [
+            {
+              "maximum": 0.075,
+              "minimum": -0.075,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "OffsetCornerLatitudePoint3": {
+          "description": "Tag 30: Offset Corner Latitude Point 3 (deg)",
+          "oneOf": [
+            {
+              "maximum": 0.075,
+              "minimum": -0.075,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "OffsetCornerLatitudePoint4": {
+          "description": "Tag 32: Offset Corner Latitude Point 4 (deg)",
+          "oneOf": [
+            {
+              "maximum": 0.075,
+              "minimum": -0.075,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "OffsetCornerLongitudePoint1": {
+          "description": "Tag 27: Offset Corner Longitude Point 1 (deg)",
+          "oneOf": [
+            {
+              "maximum": 0.075,
+              "minimum": -0.075,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "OffsetCornerLongitudePoint2": {
+          "description": "Tag 29: Offset Corner Longitude Point 2 (deg)",
+          "oneOf": [
+            {
+              "maximum": 0.075,
+              "minimum": -0.075,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "OffsetCornerLongitudePoint3": {
+          "description": "Tag 31: Offset Corner Longitude Point 3 (deg)",
+          "oneOf": [
+            {
+              "maximum": 0.075,
+              "minimum": -0.075,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "OffsetCornerLongitudePoint4": {
+          "description": "Tag 33: Offset Corner Longitude Point 4 (deg)",
+          "oneOf": [
+            {
+              "maximum": 0.075,
+              "minimum": -0.075,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "OnBoardMiStorageCapacity": {
+          "description": "Tag 133: On-board MI Storage Capacity (GB)",
+          "oneOf": [
+            {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "OnBoardMiStoragePercentFull": {
+          "description": "Tag 120: On-board MI Storage Percent Full (%)",
+          "oneOf": [
+            {
+              "maximum": 100.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "OperationalBase": {
+          "description": "Tag 107: Operational Base",
+          "oneOf": [
+            {
+              "maxLength": 127,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "OperationalMode": {
+          "description": "Tag 77: Operational Mode",
+          "oneOf": [
+            {
+              "oneOf": [
+                {
+                  "enum": [
+                    0,
+                    1,
+                    2,
+                    3,
+                    4,
+                    5
+                  ],
+                  "type": "integer"
+                },
+                {
+                  "enum": [
+                    "Other",
+                    "Operational",
+                    "Training",
+                    "Exercise",
+                    "Maintenance",
+                    "Test"
+                  ],
+                  "type": "string"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "OutsideAirTemperature": {
+          "description": "Tag 39: Outside Air Temperature (C)",
+          "oneOf": [
+            {
+              "maximum": 127,
+              "minimum": -128,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "PayloadList": {
+          "description": "Tag 138: Payload List",
+          "oneOf": [
+            {
+              "description": "fields as the decoder names them (see the Tag documentation)",
+              "type": [
+                "object",
+                "array",
+                "integer"
+              ]
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "PlatformAngleOfAttack": {
+          "description": "Tag 50: Platform Angle of Attack (deg)",
+          "oneOf": [
+            {
+              "maximum": 20.0,
+              "minimum": -20.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "PlatformAngleOfAttackFull": {
+          "description": "Tag 92: Platform Angle of Attack (Full) (deg)",
+          "oneOf": [
+            {
+              "maximum": 90.0,
+              "minimum": -90.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "PlatformCallSign": {
+          "description": "Tag 59: Platform Call Sign",
+          "oneOf": [
+            {
+              "maxLength": 127,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "PlatformCourseAngle": {
+          "description": "Tag 112: Platform Course Angle (deg)",
+          "oneOf": [
+            {
+              "maximum": 360.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "PlatformDesignation": {
+          "description": "Tag 10: Platform Designation",
+          "oneOf": [
+            {
+              "maxLength": 127,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "PlatformFuelRemaining": {
+          "description": "Tag 58: Platform Fuel Remaining (kg)",
+          "oneOf": [
+            {
+              "maximum": 10000.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "PlatformGroundSpeed": {
+          "description": "Tag 56: Platform Ground Speed (m/s)",
+          "oneOf": [
+            {
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "PlatformHeadingAngle": {
+          "description": "Tag 5: Platform Heading Angle (deg)",
+          "oneOf": [
+            {
+              "maximum": 360.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "PlatformIndicatedAirspeed": {
+          "description": "Tag 9: Platform Indicated Airspeed (m/s)",
+          "oneOf": [
+            {
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "PlatformMagneticHeading": {
+          "description": "Tag 64: Platform Magnetic Heading (deg)",
+          "oneOf": [
+            {
+              "maximum": 360.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "PlatformPitchAngle": {
+          "description": "Tag 6: Platform Pitch Angle (deg)",
+          "oneOf": [
+            {
+              "maximum": 20.0,
+              "minimum": -20.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "PlatformPitchAngleFull": {
+          "description": "Tag 90: Platform Pitch Angle (Full) (deg)",
+          "oneOf": [
+            {
+              "maximum": 90.0,
+              "minimum": -90.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "PlatformRollAngle": {
+          "description": "Tag 7: Platform Roll Angle (deg)",
+          "oneOf": [
+            {
+              "maximum": 50.0,
+              "minimum": -50.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "PlatformRollAngleFull": {
+          "description": "Tag 91: Platform Roll Angle (Full) (deg)",
+          "oneOf": [
+            {
+              "maximum": 90.0,
+              "minimum": -90.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "PlatformSideslipAngle": {
+          "description": "Tag 52: Platform Sideslip Angle (deg)",
+          "oneOf": [
+            {
+              "maximum": 20.0,
+              "minimum": -20.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "PlatformSideslipAngleFull": {
+          "description": "Tag 93: Platform Sideslip Angle (Full) (deg)",
+          "oneOf": [
+            {
+              "maximum": 180.0,
+              "minimum": -180.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "PlatformStatus": {
+          "description": "Tag 125: Platform Status",
+          "oneOf": [
+            {
+              "oneOf": [
+                {
+                  "enum": [
+                    0,
+                    1,
+                    2,
+                    3,
+                    4,
+                    5,
+                    6,
+                    7,
+                    8,
+                    9,
+                    10,
+                    11,
+                    12
+                  ],
+                  "type": "integer"
+                },
+                {
+                  "enum": [
+                    "Active",
+                    "Pre-flight",
+                    "Pre-flight-taxiing",
+                    "Run-up",
+                    "Take-off",
+                    "Ingress",
+                    "Manual operation",
+                    "Automated-orbit",
+                    "Transitioning",
+                    "Egress",
+                    "Landing",
+                    "Landed-taxiing",
+                    "Landed-Parked"
+                  ],
+                  "type": "string"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "PlatformTailNumber": {
+          "description": "Tag 4: Platform Tail Number",
+          "oneOf": [
+            {
+              "maxLength": 127,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "PlatformTrueAirspeed": {
+          "description": "Tag 8: Platform True Airspeed (m/s)",
+          "oneOf": [
+            {
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "PlatformVerticalSpeed": {
+          "description": "Tag 51: Platform Vertical Speed (m/s)",
+          "oneOf": [
+            {
+              "maximum": 180.0,
+              "minimum": -180.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "PositioningMethodSource": {
+          "description": "Tag 124: Positioning Method Source",
+          "oneOf": [
+            {
+              "description": "fields as the decoder names them (see the Tag documentation)",
+              "type": [
+                "object",
+                "array",
+                "integer"
+              ]
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "PropulsionUnitSpeed": {
+          "description": "Tag 111: Propulsion Unit Speed (rpm)",
+          "oneOf": [
+            {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "RadarAltimeter": {
+          "description": "Tag 114: Radar Altimeter (m)",
+          "oneOf": [
+            {
+              "maximum": 40000.0,
+              "minimum": -900.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "RangeImageLocalSet": {
+          "description": "Tag 97: Range Image Local Set",
+          "oneOf": [
+            {
+              "required": [
+                "hex"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "RangeToRecoveryLocation": {
+          "description": "Tag 109: Range To Recovery Location (km)",
+          "oneOf": [
+            {
+              "maximum": 21000.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "RelativeHumidity": {
+          "description": "Tag 55: Relative Humidity (%)",
+          "oneOf": [
+            {
+              "maximum": 100.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "RvtLocalSet": {
+          "description": "Tag 73: RVT Local Set",
+          "oneOf": [
+            {
+              "description": "the nested set: ST 0102 items for tag 48, the decoder's JSON of a set, or {\"hex\": ..}",
+              "type": "object"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "SarMotionImageryLocalSet": {
+          "description": "Tag 95: SAR Motion Imagery Local Set",
+          "oneOf": [
+            {
+              "required": [
+                "hex"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "SdccFlp": {
+          "description": "Tag 102: SDCC-FLP",
+          "oneOf": [
+            {
+              "description": "fields as the decoder names them (see the Tag documentation)",
+              "type": [
+                "object",
+                "array",
+                "integer"
+              ]
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "SecurityLocalSet": {
+          "description": "Tag 48: Security Local Set",
+          "oneOf": [
+            {
+              "description": "the nested set: ST 0102 items for tag 48, the decoder's JSON of a set, or {\"hex\": ..}",
+              "type": "object"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "SegmentLocalSet": {
+          "description": "Tag 100: Segment Local Set",
+          "oneOf": [
+            {
+              "description": "the nested set: ST 0102 items for tag 48, the decoder's JSON of a set, or {\"hex\": ..}",
+              "type": "object"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "SensorAzimuthRate": {
+          "description": "Tag 117: Sensor Azimuth Rate (deg/s)",
+          "oneOf": [
+            {
+              "maximum": 1000.0,
+              "minimum": -1000.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "SensorControlMode": {
+          "description": "Tag 126: Sensor Control Mode",
+          "oneOf": [
+            {
+              "oneOf": [
+                {
+                  "enum": [
+                    0,
+                    1,
+                    2,
+                    3,
+                    4,
+                    5,
+                    6
+                  ],
+                  "type": "integer"
+                },
+                {
+                  "enum": [
+                    "Off",
+                    "Home Position",
+                    "Uncontrolled",
+                    "Manual Control",
+                    "Calibrating",
+                    "Auto - Holding Position",
+                    "Auto - Tracking"
+                  ],
+                  "type": "string"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "SensorEastVelocity": {
+          "description": "Tag 80: Sensor East Velocity (m/s)",
+          "oneOf": [
+            {
+              "maximum": 327.0,
+              "minimum": -327.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "SensorElevationRate": {
+          "description": "Tag 118: Sensor Elevation Rate (deg/s)",
+          "oneOf": [
+            {
+              "maximum": 1000.0,
+              "minimum": -1000.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "SensorEllipsoidHeight": {
+          "description": "Tag 75: Sensor Ellipsoid Height (m)",
+          "oneOf": [
+            {
+              "maximum": 19000.0,
+              "minimum": -900.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "SensorEllipsoidHeightExtended": {
+          "description": "Tag 104: Sensor Ellipsoid Height Extended (m)",
+          "oneOf": [
+            {
+              "maximum": 40000.0,
+              "minimum": -900.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "SensorFieldOfViewName": {
+          "description": "Tag 63: Sensor Field of View Name",
+          "oneOf": [
+            {
+              "oneOf": [
+                {
+                  "enum": [
+                    0,
+                    1,
+                    2,
+                    3,
+                    4,
+                    5,
+                    6,
+                    7,
+                    8
+                  ],
+                  "type": "integer"
+                },
+                {
+                  "enum": [
+                    "Ultranarrow",
+                    "Narrow",
+                    "Medium",
+                    "Wide",
+                    "Ultrawide",
+                    "Narrow Medium",
+                    "2x Ultranarrow",
+                    "4x Ultranarrow",
+                    "Continuous Zoom"
+                  ],
+                  "type": "string"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "SensorFrameRatePack": {
+          "description": "Tag 127: Sensor Frame Rate Pack (Hz)",
+          "oneOf": [
+            {
+              "description": "fields as the decoder names them (see the Tag documentation)",
+              "type": [
+                "object",
+                "array",
+                "integer"
+              ]
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "SensorHorizontalFieldOfView": {
+          "description": "Tag 16: Sensor Horizontal Field of View (deg)",
+          "oneOf": [
+            {
+              "maximum": 180.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "SensorLatitude": {
+          "description": "Tag 13: Sensor Latitude (deg)",
+          "oneOf": [
+            {
+              "maximum": 90.0,
+              "minimum": -90.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "SensorLongitude": {
+          "description": "Tag 14: Sensor Longitude (deg)",
+          "oneOf": [
+            {
+              "maximum": 180.0,
+              "minimum": -180.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "SensorNorthVelocity": {
+          "description": "Tag 79: Sensor North Velocity (m/s)",
+          "oneOf": [
+            {
+              "maximum": 327.0,
+              "minimum": -327.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "SensorRelativeAzimuthAngle": {
+          "description": "Tag 18: Sensor Relative Azimuth Angle (deg)",
+          "oneOf": [
+            {
+              "maximum": 360.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "SensorRelativeElevationAngle": {
+          "description": "Tag 19: Sensor Relative Elevation Angle (deg)",
+          "oneOf": [
+            {
+              "maximum": 180.0,
+              "minimum": -180.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "SensorRelativeRollAngle": {
+          "description": "Tag 20: Sensor Relative Roll Angle (deg)",
+          "oneOf": [
+            {
+              "maximum": 360.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "SensorRollRate": {
+          "description": "Tag 119: Sensor Roll Rate (deg/s)",
+          "oneOf": [
+            {
+              "maximum": 1000.0,
+              "minimum": -1000.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "SensorTrueAltitude": {
+          "description": "Tag 15: Sensor True Altitude (m)",
+          "oneOf": [
+            {
+              "maximum": 19000.0,
+              "minimum": -900.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "SensorVerticalFieldOfView": {
+          "description": "Tag 17: Sensor Vertical Field of View (deg)",
+          "oneOf": [
+            {
+              "maximum": 180.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "SlantRange": {
+          "description": "Tag 21: Slant Range (m)",
+          "oneOf": [
+            {
+              "maximum": 5000000.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "StaticPressure": {
+          "description": "Tag 37: Static Pressure (mbar)",
+          "oneOf": [
+            {
+              "maximum": 5000.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "StreamDesignator": {
+          "description": "Tag 106: Stream Designator",
+          "oneOf": [
+            {
+              "maxLength": 127,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "TakeOffTime": {
+          "description": "Tag 131: Take-off Time (us)",
+          "oneOf": [
+            {
+              "description": "MISP microseconds or an RFC 3339 instant",
+              "type": [
+                "integer",
+                "string"
+              ]
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "TargetErrorEstimateCe90": {
+          "description": "Tag 45: Target Error Estimate - CE90 (m)",
+          "oneOf": [
+            {
+              "maximum": 4095.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "TargetErrorEstimateLe90": {
+          "description": "Tag 46: Target Error Estimate - LE90 (m)",
+          "oneOf": [
+            {
+              "maximum": 4095.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "TargetId": {
+          "description": "Tag 129: Target ID",
+          "oneOf": [
+            {
+              "maxLength": 32,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "TargetLocationElevation": {
+          "description": "Tag 42: Target Location Elevation (m)",
+          "oneOf": [
+            {
+              "maximum": 19000.0,
+              "minimum": -900.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "TargetLocationLatitude": {
+          "description": "Tag 40: Target Location Latitude (deg)",
+          "oneOf": [
+            {
+              "maximum": 90.0,
+              "minimum": -90.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "TargetLocationLongitude": {
+          "description": "Tag 41: Target Location Longitude (deg)",
+          "oneOf": [
+            {
+              "maximum": 180.0,
+              "minimum": -180.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "TargetTrackGateHeight": {
+          "description": "Tag 44: Target Track Gate Height (pixels)",
+          "oneOf": [
+            {
+              "maximum": 510,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "TargetTrackGateWidth": {
+          "description": "Tag 43: Target Track Gate Width (pixels)",
+          "oneOf": [
+            {
+              "maximum": 510,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "TargetWidth": {
+          "description": "Tag 22: Target Width (m)",
+          "oneOf": [
+            {
+              "maximum": 10000.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "TargetWidthExtended": {
+          "description": "Tag 96: Target Width Extended (m)",
+          "oneOf": [
+            {
+              "maximum": 1500000.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "TimeAirborne": {
+          "description": "Tag 110: Time Airborne (s)",
+          "oneOf": [
+            {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "TransmissionFrequency": {
+          "description": "Tag 132: Transmission Frequency (MHz)",
+          "oneOf": [
+            {
+              "maximum": 99999.0,
+              "minimum": 1.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "UasDatalinkLsVersionNumber": {
+          "description": "Tag 65: UAS Datalink LS Version Number",
+          "oneOf": [
+            {
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "ViewDomain": {
+          "description": "Tag 142: View Domain (deg)",
+          "oneOf": [
+            {
+              "description": "fields as the decoder names them (see the Tag documentation)",
+              "type": [
+                "object",
+                "array",
+                "integer"
+              ]
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "VmtiLocalSet": {
+          "description": "Tag 74: VMTI Local Set",
+          "oneOf": [
+            {
+              "description": "the nested set: ST 0102 items for tag 48, the decoder's JSON of a set, or {\"hex\": ..}",
+              "type": "object"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "WavelengthsList": {
+          "description": "Tag 128: Wavelengths List (nm)",
+          "oneOf": [
+            {
+              "description": "fields as the decoder names them (see the Tag documentation)",
+              "type": [
+                "object",
+                "array",
+                "integer"
+              ]
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "WaypointList": {
+          "description": "Tag 141: Waypoint List",
+          "oneOf": [
+            {
+              "description": "fields as the decoder names them (see the Tag documentation)",
+              "type": [
+                "object",
+                "array",
+                "integer"
+              ]
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "WeaponFired": {
+          "description": "Tag 61: Weapon Fired",
+          "oneOf": [
+            {
+              "description": "fields as the decoder names them (see the Tag documentation)",
+              "type": [
+                "object",
+                "array",
+                "integer"
+              ]
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "WeaponLoad": {
+          "description": "Tag 60: Weapon Load",
+          "oneOf": [
+            {
+              "description": "fields as the decoder names them (see the Tag documentation)",
+              "type": [
+                "object",
+                "array",
+                "integer"
+              ]
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "WeaponsStores": {
+          "description": "Tag 140: Weapons Stores",
+          "oneOf": [
+            {
+              "description": "fields as the decoder names them (see the Tag documentation)",
+              "type": [
+                "object",
+                "array",
+                "integer"
+              ]
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "WindDirection": {
+          "description": "Tag 35: Wind Direction (deg)",
+          "oneOf": [
+            {
+              "maximum": 360.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "WindSpeed": {
+          "description": "Tag 36: Wind Speed (m/s)",
+          "oneOf": [
+            {
+              "maximum": 100.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "ZoomPercentage": {
+          "description": "Tag 134: Zoom Percentage (%)",
+          "oneOf": [
+            {
+              "maximum": 100.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "required": [
+                "special"
+              ],
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "time": {
+      "description": "RFC 3339 UTC or MISP reading; needs time_scale",
+      "type": "string"
+    },
+    "time_scale": {
+      "enum": [
+        "utc",
+        "misp"
+      ]
+    },
+    "time_us": {
+      "description": "MISP microseconds, or POSIX UTC with time_scale utc",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "version": {
+      "description": "tag 65 override (default 19)",
+      "maximum": 255,
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "title": "MISB ST 0601 authoring record (misb NDJSON, one record per line)",
+  "type": "object"
+}

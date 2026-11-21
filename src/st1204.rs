@@ -39,6 +39,10 @@
 
 use crate::{Field, Value};
 
+#[cfg(feature = "encode")]
+#[cfg_attr(docsrs, doc(cfg(feature = "encode")))]
+pub mod encode;
+
 /// Bytes in one identifier component (a UUID, ST 1204.3 Table 5).
 const UUID_LEN: usize = 16;
 

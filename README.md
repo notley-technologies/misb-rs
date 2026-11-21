@@ -1,6 +1,6 @@
 # misb
 
-A Rust and C decoder for MISB ST 0601 UAS Datalink Local Set metadata. It accepts a KLV buffer or a live byte stream, verifies the packet checksum and reports each item with its name, engineering value and units. Applications supply the bytes and control the decoder's memory limits.
+A Rust and C decoder and encoder for MISB ST 0601 UAS Datalink Local Set metadata. The decoder accepts a KLV buffer or a live byte stream, verifies the packet checksum and reports each item with its name, engineering value and units. The encoder builds conformant packets from engineering values, driven by the same tag tables, and re-encodes decoded packets byte for byte. Applications supply the bytes and control the memory limits; the library never does I/O or reads the clock.
 
 The decoder uses SMPTE ST 336 framing and accepts KLV extracted from MPEG transport streams. [smpte-klv](https://github.com/notley-technologies/smpte-klv-rs) · [mpegts](https://github.com/notley-technologies/mpegts-rs)
 
@@ -140,6 +140,42 @@ ST 0601 tag 1 is a 16-bit running sum of the packet as big-endian words, from th
 
 By default the decoder returns failing packets, marked as above and counted in `stats().checksum_errors` and `stats().checksum_missing`. ST 0601.8-08 asks receivers to discard them: set `Config::reject_bad_checksum` and the `Decoder` (and so `decode_all_with` and `decode_iter_with`) drops every packet that is `Mismatch` or `Missing`, still counting them, and adds their bytes to `bytes_skipped`. `decode` and `decode_with` never drop a packet; check `packet.checksum` or `packet.is_ok()`. The CRC of a nested ST 0806 set and the checksum of a nested ST 0903 set are reported as items, not verified: ST 0601 leaves them out of the nested form.
 
+## Encoding
+
+The `encode` feature (on whenever `capi` is, so by default) adds `misb::encode`. `St0601Builder` writes one packet: tag 2 first, tag 65 (19) and the checksum added for you, the other items in ascending tag order, every length and tag in its minimal BER form. Each value is checked as it is set, against the tag table the decoder uses:
+
+```rust
+#[cfg(feature = "encode")]
+fn build() -> Result<Vec<u8>, misb::encode::EncodeError> {
+    use misb::encode::{Classification, Input, Security, St0601Builder};
+    use misb::{st0601::Tag, LeapSeconds, MispTime};
+
+    let now = MispTime::from_utc("2026-11-20T21:04:05.123456Z".parse().unwrap(), LeapSeconds::builtin()).unwrap();
+    let security = Security::new(Classification::Unclassified, 0x0D, "//US", 0x0D, "US");
+    let mut b = St0601Builder::new(now);
+    b.set(Tag::MissionId, "MISSION01")?
+        .set(Tag::SensorLatitude, 38.8895)?                // degrees
+        .set(Tag::SensorEllipsoidHeight, 1850.0)?          // metres
+        .set(Tag::FrameCenterLatitude, Input::OffEarth)?   // a state the item defines
+        .unknown(Tag::SlantRange)?                         // zero-length item: now unknown
+        .set(Tag::SecurityLocalSet, Input::Set(security.encode()?))?;
+    b.finish()                                             // or finish_into(&mut reused_buffer)
+}
+```
+
+- **Values.** `Input` takes engineering units (`f64` for mapped and IMAPB items, integers, text, `MispTime`, enumeration codes or labels), the special states some items define (`OffEarth`, `OutOfRange`, `BelowMinimum`, `AboveMaximum`), already encoded nested sets, and any decoded `Value`, so packs and lists use the field names the decoder produces. Linear maps round half away from zero and IMAPB truncates, as ST 0601 and ST 1201 specify; IMAPB items take a default length per tag, or `set_imapb` for another.
+- **Checks.** `Policy::Strict` (default) rejects a value outside its range, except that items with an "Out of Range" indicator write it and IMAPB items write their below/above flag, each with a `Warning`; full-circle angles wrap. `Policy::Clamp` clamps with a warning. NaN, infinity, undefined or Reserved codes, duplicates, deprecated item 66, root-level 143, 75 with 104, text over its maximum, and zero-length mandatory items are always errors. Text is cleaned as MISB ST 0107 requires. Pre-encoded set bytes must frame as a local set; `set_raw` passes recorded bytes through unchecked.
+- **Re-encoding.** `encode_packet` writes a decoded `Packet` back: items whose recorded bytes still decode to their value are copied, so valid packets come back unchanged (including IMAPB flags the value model cannot tell apart), and edited items are encoded from their value.
+- **VMTI.** `Vmti` and its parts (`VTarget`, `Location`, `Motion`, `VMask`, `VObject`, `VFeature`, `VTracker`, `VChip`, `Algorithm`, `Ontology`) build the ST 0903.6 set for tag 74 with every rule of the standard checked (unique target ids, pairs, references between sets, IMAPB special values including the VMTI "invalid" pattern); `misb::st0903::encode::offsets` computes target offsets from the frame centre. A packet carrying VMTI needs tags 23 and 24. Decoded VMTI sets re-encode, keeping each unchanged element's recorded bytes. `CoreIdentifier` writes the ST 1204.3 MIIS Core Identifier (tag 94, VMTI tag 13) from its parts or its canonical text.
+- **Security.** `Security` builds the ST 0102.12 set for tag 48: the six Required items, valid coding methods only (never an "Omitted Value"; FIPS 10-4 warns), ASCII text, real dates, UTF-16BE country codes, version 12. `encode_partial` allows a subset; `Security::from_set` reads a decoded set.
+- **Tests.** Every ST 0601.19 item example and both ST 0902.8 Annex C packets re-encode byte for byte from their values; every code of the 8- and 16-bit maps and random 32-bit codes decode and encode to themselves; random inputs never yield an unreadable packet.
+
+The rules come from the phase 0 documents in [docs/standards](docs/standards/); the code cites their rule ids.
+
+## MISP time
+
+ST 0601 tag 2 is MISP time (MISB ST 0603.5): TAI - 8.000082 s, 28.999918 s ahead of UTC since 2017, not POSIX time. `MispTime` converts from and to UTC with a leap second table (`LeapSeconds::builtin()`, valid before 2027-07-01 per IERS Bulletin C 72, or `LeapSeconds::from_list` for a newer one), handles 23:59:60, and covers 1970 to 1972 with the Handbook's rate formula. `MispTime::from_posix_assuming_no_offset` exists for systems that must match encoders writing POSIX time, so that choice is explicit. `LeapSeconds::st0601_leap_seconds` gives the tag 136 value (29).
+
 ## JSON
 
 With the `serde` feature, `Packet`, `Item`, `Value`, `Field`, `Checksum`, `Standard`, `Error`, `Stats`, `Received` and `Config` implement `Serialize`, and `Config` also implements `Deserialize`, with missing fields taking their defaults. A packet with tags 2, 5, 13 (zero length), 48 and 1, through `serde_json` (line breaks added):
@@ -165,6 +201,16 @@ With the `serde` feature, `Packet`, `Item`, `Value`, `Field`, `Checksum`, `Stand
 - `Stats` is an object of its counters, `Received` is `{"packet":..,"offset":..,"bytes":..}`, and `Config` an object of its fields.
 
 A byte-for-byte test (`json_golden` in `src/lib.rs`) pins this format for every kind of value, a nested set that stopped with an error and a checksum mismatch.
+
+### NDJSON authoring
+
+The `json` feature reads one packet per line, for people and scripts:
+
+```json
+{"time": "2026-11-20T21:04:05.123456Z", "time_scale": "utc", "items": {"MissionId": "MISSION01", "13": 38.8895, "Sensor Longitude": -77.0353, "SlantRange": null, "SecurityLocalSet": {"SecurityClassification": "UNCLASSIFIED//", "ClassifyingCountryCodingMethod": "GENC Two Letter", "ClassifyingCountry": "//US", "ObjectCountryCodingMethod": 13, "ObjectCountryCodes": "US"}}}
+```
+
+Keys are tag numbers, `Tag` variant names or the standard's names; values are engineering units; `null` writes "unknown". `time_scale` is required with an RFC 3339 `time`, so UTC and MISP time are never confused (`time_us` is MISP microseconds). Lines of the decoder's own JSON (above) are accepted too, so `decode, edit, encode` round trips. `misb::json::encode_line` encodes a line; `misb::json::schema()` is the JSON Schema, generated from the tag table and committed as [docs/schema/st0601-authoring.schema.json](docs/schema/st0601-authoring.schema.json) (a test keeps it current).
 
 ## Configuration
 
@@ -310,13 +356,37 @@ cc app.c $(pkg-config --cflags --libs misb)
 ```
 
 ```cmake
-find_package(misb 0.1 REQUIRED)
+find_package(misb 0.2 REQUIRED)
 target_link_libraries(app PRIVATE misb::misb)   # or misb::misb_static
 ```
 
 - Static linking needs the system libraries listed by `pkg-config --static --libs misb`; the CMake static target adds them. Link with `-Wl,--gc-sections` to drop unused code.
 - Two Rust static libraries in one program can clash; use the shared library in that case.
 - On Windows, `cargo build --release` produces `misb.dll`, its import library `misb.dll.lib`, and the static `misb.lib`.
+
+### Encoding from C
+
+The same library encodes. An opaque `misb_encoder` builds one packet at a time with a setter per kind of value; a rejected value returns `MISB_ERR_ENCODE`, adds nothing, and `misb_encoder_last_error` says why (standard, tag, `MISB_ENCODE_ERR_*` kind and a static reason):
+
+```c
+misb_encoder *e;
+uint8_t buf[1024];
+size_t len;
+uint64_t now;
+misb_utc utc = {sizeof utc, 2026, 11, 20, 21, 4, 5, 123456};
+misb_misp_from_utc(&utc, &now);                        /* MISP time, not POSIX time */
+if (misb_encoder_new(NULL, now, &e) != MISB_OK)
+    return 1;
+misb_encoder_set_text(e, 3, "MISSION01", 9);
+misb_encoder_set_f64(e, 13, 38.8895);                  /* degrees */
+misb_encoder_set_special(e, 23, MISB_SPECIAL_OFF_EARTH);
+if (misb_encoder_finish(e, buf, sizeof buf, &len) == MISB_OK)
+    fwrite(buf, 1, len, stdout);
+misb_encoder_reset(e, now + 33367);                    /* next packet, buffers reused */
+misb_encoder_free(e);
+```
+
+`misb_security_encode` builds the tag 48 set from a `misb_security` struct, `misb_encode_packet` re-encodes a decoded `misb_packet`, and `misb_misp_from_utc`, `misb_misp_from_posix_us` and `misb_misp_to_utc` convert time. Output functions take a buffer and its capacity and return `MISB_ERR_TOO_SMALL` with the size needed in `*len`. An encoder follows the decoder's rules on threads and poisoning.
 
 ## Examples
 
@@ -325,6 +395,8 @@ cargo run --release --example klvdump -- packets.klv                  # every pa
 cargo run --release --example klvdump -- cells.bin --sync             # input is metadata AU cells
 producer | cargo run --release --example klvdump                      # standard input, decoded as it arrives
 cargo run --release --features serde --example json -- packets.klv    # JSON Lines, one packet per line
+cargo run --release --features json --example klvencode -- in.ndjson > out.klv   # NDJSON records to packets
+cargo run --release --features json --example klvencode -- --schema   # the authoring JSON Schema
 ```
 
 `klvdump` also takes `--quiet` (counters only); `json` takes `--sync` and `--bytes` (each packet's bytes as received, in hex) and writes the counters to standard error. With `--sync`, both examples read one access unit cell at a time, keep a decoder per service and exit with an error for a truncated cell.

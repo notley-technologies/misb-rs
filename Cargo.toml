@@ -1,6 +1,6 @@
 [package]
 name = "misb"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 # The library; the optional serde feature needs 1.71, the rust-version of
 # serde_derive and the proc-macro crates it pulls in.
@@ -23,15 +23,23 @@ crate-type = ["rlib", "cdylib", "staticlib"]
 
 [features]
 default = ["capi"]
-## Export the existing C ABI. Rust consumers can disable default features
-## to compile the decoder with unsafe code forbidden.
-capi = []
+## Export the C ABI (decoder and encoder; implies `encode`, so the C
+## library is one artifact). Rust consumers can disable default features
+## to compile with unsafe code forbidden.
+capi = ["encode"]
 ## `serde::Serialize` for the decoded types, errors and statistics, and
 ## `Serialize` and `Deserialize` for `Config`.
 serde = ["dep:serde"]
+## The encoder (`misb::encode`): ST 0601 packets and the ST 0102 and ST 0903
+## sets they embed. No extra dependencies.
+encode = []
+## The NDJSON authoring format for the encoder (`misb::json`). Adds
+## serde_json.
+json = ["encode", "serde", "dep:serde_json"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
 smpte-klv = { git = "https://github.com/notley-technologies/smpte-klv-rs", rev = "bc5346dd298fa061d6838f5b90ffbb952019dcd7" }
 
 [dev-dependencies]
@@ -54,6 +62,18 @@ required-features = ["serde"]
 
 [[example]]
 name = "throughput"
+
+[[example]]
+name = "klvencode"
+required-features = ["json"]
+
+[[test]]
+name = "encode_st0601"
+required-features = ["encode"]
+
+[[test]]
+name = "json"
+required-features = ["json"]
 
 [package.metadata.docs.rs]
 all-features = true

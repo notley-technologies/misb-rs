@@ -96,6 +96,12 @@
 pub mod capi;
 pub mod checksum;
 mod config;
+#[cfg(feature = "encode")]
+#[cfg_attr(docsrs, doc(cfg(feature = "encode")))]
+pub mod encode;
+#[cfg(feature = "json")]
+#[cfg_attr(docsrs, doc(cfg(feature = "json")))]
+pub mod json;
 mod error;
 pub mod imapb;
 mod klv;
@@ -107,11 +113,13 @@ pub mod st0903;
 pub mod st1010;
 pub mod st1204;
 mod stream;
+mod time;
 mod value;
 
 pub use config::Config;
 pub use error::Error;
 pub use stream::{au_cells, AuCell, AuCells, Decoder, Received, Stats};
+pub use time::{LeapSeconds, LeapSecondsError, MispTime, ParseUtcError, UtcDateTime};
 pub use value::{Checksum, Field, Item, Packet, Standard, TagKey, Value};
 
 /// The version of this crate, for audit records. The revisions of the MISB

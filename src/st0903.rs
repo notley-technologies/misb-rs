@@ -204,6 +204,10 @@
 //! Ontology (Table 17): 1 Ontology ID (uint V8), 2 Parent ID (uint V8), 3
 //! Ontology IRI, 4 Entity IRI, 5 Version IRI, 6 Label (text).
 
+#[cfg(feature = "encode")]
+#[cfg_attr(docsrs, doc(cfg(feature = "encode")))]
+pub mod encode;
+
 use crate::imapb;
 use crate::klv::be_uint;
 use crate::{Config, Field, Item, Value};
@@ -697,6 +701,11 @@ fn uint(v: &[u8], max_len: usize, min: u64) -> Value {
 /// UTF-8 text, decoded lossily, with an optional character limit (ST 0903.6
 /// counts characters, each up to four bytes: sections 10.1.3 and 10.1.10).
 fn text(v: &[u8], limit: Option<(usize, &'static str)>) -> Value {
+    // MISB ST 0107.4 6.3.3.2: a single 00 byte is the empty string
+    // (DECISIONS P-1).
+    if v == [0] {
+        return Value::Text(String::new());
+    }
     let s = String::from_utf8_lossy(v);
     if let Some((max, why)) = limit {
         if s.chars().count() > max {

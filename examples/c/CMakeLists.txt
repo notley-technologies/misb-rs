@@ -8,7 +8,7 @@ cmake_minimum_required(VERSION 3.10)
 project(misb_examples C)
 
 option(MISB_STATIC "Link misb statically" OFF)
-find_package(misb 0.1 REQUIRED)
+find_package(misb 0.2 REQUIRED)
 
 add_executable(misb_dump misb_dump.c)
 if(MISB_STATIC)

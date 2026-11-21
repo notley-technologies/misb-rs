@@ -39,6 +39,9 @@
 
 use crate::{Config, Item, Value};
 
+#[cfg(feature = "encode")]
+pub(crate) mod encode;
+
 /// Tags of the Security Metadata Local Set (ST 0102.12 Table 2).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
@@ -260,7 +263,7 @@ fn decode_value(t: Tag, v: &[u8]) -> Value {
 }
 
 /// Tag 1 labels: the Universal Set strings of section 6.8.1 and Table 2.
-fn classification(code: u8) -> Option<&'static str> {
+pub(crate) fn classification(code: u8) -> Option<&'static str> {
     Some(match code {
         0x01 => "UNCLASSIFIED//",
         0x02 => "RESTRICTED//",
@@ -273,7 +276,7 @@ fn classification(code: u8) -> Option<&'static str> {
 
 /// Tag 2 labels (Table 2). Up to ST 0102.7, 0x08 was "1059 Numeric" and
 /// 0x09 "Other"; the labels follow ST 0102.12, which omits both.
-fn classifying_coding_method(code: u8) -> Option<&'static str> {
+pub(crate) fn classifying_coding_method(code: u8) -> Option<&'static str> {
     Some(match code {
         0x01 => "ISO-3166 Two Letter",
         0x02 => "ISO-3166 Three Letter",
@@ -325,6 +328,11 @@ fn enumeration(v: &[u8], label: fn(u8) -> Option<&'static str>) -> Value {
 /// ISO/IEC 646 text, kept exactly as sent (lossy UTF-8 for bytes above
 /// 0x7F, which ISO/IEC 646 does not define).
 fn text(v: &[u8]) -> Value {
+    // MISB ST 0107.4 6.3.3.2: a single 00 byte is the empty string
+    // (DECISIONS P-1).
+    if v == [0] {
+        return Value::Text(String::new());
+    }
     Value::Text(String::from_utf8_lossy(v).into_owned())
 }
 
@@ -428,6 +436,13 @@ mod tests {
 
     fn item(tag: u64, v: &[u8]) -> Value {
         decode_item(tag, v, 1, &Config::default()).value
+    }
+
+    #[test]
+    fn empty_string_is_a_single_null() {
+        // MISB ST 0107.4 6.3.3.2 (DECISIONS P-1).
+        assert_eq!(item(5, &[0x00]), Value::Text(String::new()));
+        assert_eq!(item(5, &[]), Value::Unknown);
     }
 
     fn text_of(s: &str) -> Value {

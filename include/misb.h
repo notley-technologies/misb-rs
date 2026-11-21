@@ -53,9 +53,9 @@ extern "C" {
 
 /* Version of the library this header came with. */
 #define MISB_VERSION_MAJOR 0
-#define MISB_VERSION_MINOR 1
+#define MISB_VERSION_MINOR 2
 #define MISB_VERSION_PATCH 0
-#define MISB_VERSION_STRING "0.1.0"
+#define MISB_VERSION_STRING "0.2.0"
 
 /* ------------------------------------------------------------ status */
 
@@ -68,6 +68,8 @@ typedef int32_t misb_status;
 #define MISB_ERR_PARSE (-4)     /* not a complete ST 0601 packet (or AU cell) */
 #define MISB_ERR_PANIC (-5)     /* internal error; a decoder is poisoned by it */
 #define MISB_ERR_POISONED (-6)  /* the decoder failed earlier; free it */
+#define MISB_ERR_ENCODE (-7)    /* the encoder rejected a value or packet; see the error details */
+#define MISB_ERR_TOO_SMALL (-8) /* output buffer too small; *len holds the size needed */
 
 /* ------------------------------------------------------------ codes */
 
@@ -209,10 +211,11 @@ typedef struct misb_packet_info {
  *   BYTES        data, data_len. Never NULL, even when data_len is 0.
  *   TIME         time_us: microseconds since 1970-01-01T00:00:00, every day
  *                86,400 seconds (MISP time, MISB ST 0603). Not UTC: MISP
- *                time has no leap seconds and is ahead of UTC by the leap
- *                seconds since 1972 less 8.000082 s (28.999918 s since
+ *                time has no leap seconds and is ahead of UTC by TAI - UTC
+ *                less 8.000082 s (37 - 8.000082 = 28.999918 s since
  *                2017), unless the producer wrote POSIX time; ST 0601 tag
- *                136 carries the offset. The library applies none.
+ *                136 carries the rounded offset (29). The library applies
+ *                none.
  *   ENUM         enum_code; enum_label is the standard's name for the code,
  *                or NULL when it defines none.
  *   OUT_OF_RANGE nothing: the standard's reserved error encoding was
@@ -272,7 +275,7 @@ typedef struct misb_au_cell {
 /* ------------------------------------------------------------ library */
 
 uint32_t misb_abi_version(void);
-const char *misb_version(void);                   /* e.g. "0.1.0" */
+const char *misb_version(void);                   /* e.g. "0.2.0" */
 const char *misb_status_string(misb_status status);
 const char *misb_value_kind_name(uint32_t kind);  /* e.g. "float"; NULL for unknown codes */
 const char *misb_standard_name(uint32_t standard); /* e.g. "ST 0601"; NULL for unknown codes */
@@ -389,6 +392,179 @@ misb_status misb_set_info_get(const misb_item *set, misb_packet_info *out);
  * 0, at a static byte), so it is valid as long as `data` is. `data` may be
  * NULL when len is 0. */
 misb_status misb_au_cell_next(const uint8_t *data, size_t len, size_t *offset, misb_au_cell *out);
+
+/* ------------------------------------------------------------ encoder */
+
+/* Building ST 0601 packets (MISB ST 0601.19 with the rules of MISB ST
+ * 0107; the Rust documentation of misb::encode describes them). Values are
+ * engineering units: degrees, metres, MISP microseconds (not UTC; see the
+ * MISP time functions below). Tag 2 is the encoder's time, tag 65 is 19
+ * unless overridden, tag 1 (the checksum) is computed; the other items go
+ * in ascending tag order by default.
+ *
+ * A setter checks its value at once: a value the standard does not allow
+ * returns MISB_ERR_ENCODE, adds nothing, and misb_encoder_last_error tells
+ * why. An encoder is not thread-safe (use each from one thread at a time);
+ * an internal panic poisons it like a decoder. */
+
+typedef struct misb_encoder misb_encoder; /* opaque packet builder */
+
+/* misb_encode_options.policy: what a value outside its item's range does. */
+#define MISB_POLICY_STRICT 0    /* rejected (items with an Out of Range indicator write it; IMAPB writes its flag) */
+#define MISB_POLICY_CLAMP 1     /* clamped to the range, with a warning */
+/* misb_encode_options.order */
+#define MISB_ORDER_ASCENDING 0  /* ascending tags, tag 65 in its place */
+#define MISB_ORDER_CALLER 1     /* the order set (needed for an SDCC-FLP, tag 102) */
+
+/* misb_encoder_set_special */
+#define MISB_SPECIAL_OFF_EARTH 1     /* "N/A (Off-Earth)" of the latitude/longitude items that define it */
+#define MISB_SPECIAL_OUT_OF_RANGE 2  /* the "Out of Range" indicator of the items that define one */
+#define MISB_SPECIAL_BELOW_MINIMUM 3 /* MISB ST 1201 IMAP_BELOW_MINIMUM (IMAPB items) */
+#define MISB_SPECIAL_ABOVE_MAXIMUM 4 /* MISB ST 1201 IMAP_ABOVE_MAXIMUM (IMAPB items) */
+
+/* misb_encode_error.kind */
+#define MISB_ENCODE_WARNING 0
+#define MISB_ENCODE_ERR_UNKNOWN_TAG 1     /* not an ST 0601 tag (misb_encoder_set_raw passes one through) */
+#define MISB_ENCODE_ERR_NOT_ALLOWED 2     /* deprecated, root-level 143, ZLI of a mandatory item, ... */
+#define MISB_ENCODE_ERR_WRONG_TYPE 3      /* the setter does not fit the item */
+#define MISB_ENCODE_ERR_OUT_OF_RANGE 4
+#define MISB_ENCODE_ERR_NOT_FINITE 5      /* NaN or infinity */
+#define MISB_ENCODE_ERR_INVALID_CODE 6    /* undefined or Reserved enumeration code */
+#define MISB_ENCODE_ERR_TOO_LONG 7
+#define MISB_ENCODE_ERR_DUPLICATE 8       /* a single-use item set twice */
+#define MISB_ENCODE_ERR_MISSING 9         /* a required item or field */
+#define MISB_ENCODE_ERR_TOO_LARGE 10      /* packet above max_packet_bytes */
+#define MISB_ENCODE_ERR_INVALID_OPTIONS 11
+#define MISB_ENCODE_ERR_UNSUPPORTED 12    /* not modelled yet: pass the bytes with misb_encoder_set_raw */
+
+/* Zero-initialised fields are the defaults (max_packet_bytes 0 means the
+ * default of 65,535 bytes, key and length included). */
+typedef struct misb_encode_options {
+    uint32_t struct_size;
+    uint32_t policy;            /* MISB_POLICY_* */
+    uint32_t order;             /* MISB_ORDER_* */
+    uint32_t allow_legacy;      /* nonzero allows the replaced items 60 and 61 */
+    uint32_t ascii_only;        /* nonzero rejects text that is not ASCII */
+    uint32_t reserved;
+    uint64_t max_packet_bytes;  /* 34 to 1,048,576; 0 for the default */
+} misb_encode_options;
+
+typedef struct misb_encode_error {
+    uint32_t struct_size;
+    uint32_t standard;          /* MISB_STANDARD_* of the set the item belongs to */
+    uint64_t tag;               /* 0 when the error is about the packet */
+    uint32_t kind;              /* MISB_ENCODE_ERR_*, or MISB_ENCODE_WARNING */
+    uint32_t reserved;
+    const char *reason;         /* static, never NULL */
+} misb_encode_error;
+
+/* An ST 0102 Security Local Set for tag 48. A 0 code or NULL string leaves
+ * the item out. Without `partial`, the Required items (classification,
+ * both coding methods, classifying country, object country codes) must be
+ * there; tag 22 is 12 when `version` is 0. Strings are NUL-terminated
+ * printable ASCII, except object_country_codes (UTF-8, written as
+ * UTF-16BE). */
+typedef struct misb_security {
+    uint32_t struct_size;
+    uint32_t classification;            /* 1 UNCLASSIFIED// to 5 TOP SECRET// */
+    uint32_t country_coding_method;     /* tag 2, e.g. 0x0D GENC two letter */
+    uint32_t object_country_coding_method; /* tag 12 */
+    uint32_t version;                   /* tag 22; 0 for 12 */
+    uint32_t partial;
+    const char *classifying_country;    /* tag 3, e.g. "//US" ("//" added when missing) */
+    const char *sci_shi;                /* tag 4, ends with "//" */
+    const char *caveats;                /* tag 5 */
+    const char *releasing_instructions; /* tag 6, codes separated by single blanks */
+    const char *classified_by;          /* tag 7 */
+    const char *derived_from;           /* tag 8 */
+    const char *classification_reason;  /* tag 9 */
+    const char *declassification_date;  /* tag 10, YYYYMMDD */
+    const char *marking_system;         /* tag 11 */
+    const char *object_country_codes;   /* tag 13, separated by ';' */
+    const char *comments;               /* tag 14 */
+    const char *country_coding_method_date;        /* tag 23, YYYY-MM-DD */
+    const char *object_country_coding_method_date; /* tag 24, YYYY-MM-DD */
+} misb_security;
+
+/* A UTC reading; second is 60 during an inserted leap second. */
+typedef struct misb_utc {
+    uint32_t struct_size;
+    int32_t year;
+    uint32_t month;
+    uint32_t day;
+    uint32_t hour;
+    uint32_t minute;
+    uint32_t second;
+    uint32_t micros;
+} misb_utc;
+
+misb_status misb_encode_options_default(misb_encode_options *out);
+/* A builder for a packet stamped time_us (MISP microseconds, tag 2).
+ * options may be NULL for the defaults. */
+misb_status misb_encoder_new(const misb_encode_options *options, uint64_t time_us, misb_encoder **out);
+void misb_encoder_free(misb_encoder *encoder); /* NULL is ignored */
+/* Forget every item and warning and start a packet stamped time_us (keeps
+ * the options and the version override). */
+misb_status misb_encoder_reset(misb_encoder *encoder, uint64_t time_us);
+/* Override tag 65 (0 to 255; for re-encoding recorded packets only). */
+misb_status misb_encoder_set_version(misb_encoder *encoder, uint32_t version);
+
+/* Setters: one per kind of value. tag is the ST 0601 tag; 65 sets the
+ * version. Mapped and IMAPB items take set_f64; integer items set_uint or
+ * set_int (set_f64 rounds where ST 0601 says round(x)); enumerations
+ * set_code; text set_text (UTF-8, len bytes, no NUL needed); time items
+ * set_time (MISP microseconds); nested sets and items kept as bytes
+ * set_bytes (for tag 48 the output of misb_security_encode). */
+misb_status misb_encoder_set_f64(misb_encoder *encoder, uint64_t tag, double value);
+misb_status misb_encoder_set_uint(misb_encoder *encoder, uint64_t tag, uint64_t value);
+misb_status misb_encoder_set_int(misb_encoder *encoder, uint64_t tag, int64_t value);
+misb_status misb_encoder_set_time(misb_encoder *encoder, uint64_t tag, uint64_t misp_us);
+misb_status misb_encoder_set_code(misb_encoder *encoder, uint64_t tag, uint64_t code);
+/* Invalid UTF-8 gives MISB_ERR_INVALID. */
+misb_status misb_encoder_set_text(misb_encoder *encoder, uint64_t tag, const char *text, size_t len);
+misb_status misb_encoder_set_special(misb_encoder *encoder, uint64_t tag, uint32_t special);
+/* An IMAPB item with an explicit length (1 to the item's maximum). */
+misb_status misb_encoder_set_imapb(misb_encoder *encoder, uint64_t tag, double value, uint32_t length);
+misb_status misb_encoder_set_bytes(misb_encoder *encoder, uint64_t tag, const uint8_t *data, size_t len);
+/* Pass a value through unchecked (recorded bytes, tags not modelled or not
+ * defined). Tags 1, 2, 65, 66 and 143 are refused. */
+misb_status misb_encoder_set_raw(misb_encoder *encoder, uint64_t tag, const uint8_t *data, size_t len);
+/* A zero-length item: the value is now unknown. */
+misb_status misb_encoder_unknown(misb_encoder *encoder, uint64_t tag);
+/* Write the packet into buf (cap bytes) and its length into *len; the
+ * encoder keeps its items, so call misb_encoder_reset for the next packet.
+ * MISB_ERR_TOO_SMALL sets *len to the size needed (buf may then be NULL). */
+misb_status misb_encoder_finish(misb_encoder *encoder, uint8_t *buf, size_t cap, size_t *len);
+/* Why the last call returned MISB_ERR_ENCODE; MISB_EMPTY after a call
+ * that succeeded. */
+misb_status misb_encoder_last_error(const misb_encoder *encoder, misb_encode_error *out);
+/* Warnings since the last reset (values clamped, indicators written, text
+ * cleaned). */
+misb_status misb_encoder_warning_count(const misb_encoder *encoder, size_t *count);
+misb_status misb_encoder_warning(const misb_encoder *encoder, size_t index, misb_encode_error *out);
+
+/* The items of an ST 0102 set for tag 48. error may be NULL; it is filled
+ * when the status is MISB_ERR_ENCODE. */
+misb_status misb_security_encode(const misb_security *security, uint8_t *buf, size_t cap, size_t *len,
+                                 misb_encode_error *error);
+/* Re-encode a decoded packet: items whose recorded bytes still decode to
+ * their value are written from those bytes, so valid packets come back
+ * unchanged. options may be NULL; error may be NULL. */
+misb_status misb_encode_packet(const misb_packet *packet, const misb_encode_options *options, uint8_t *buf,
+                               size_t cap, size_t *len, misb_encode_error *error);
+
+/* ------------------------------------------------------------ MISP time */
+
+/* MISP time (MISB ST 0603.5) is TAI - 8.000082 s: 28.999918 s ahead of
+ * UTC since 2017. These use the library's leap second table, valid before
+ * misb_leap_seconds_valid_until() (a POSIX second; IERS Bulletin C 72 for
+ * this release). MISB_ERR_INVALID for a date before 1970, a 23:59:60 that
+ * is not a leap second, or a MISP time with no UTC reading. */
+misb_status misb_misp_from_utc(const misb_utc *utc, uint64_t *misp_us);
+/* From a POSIX microsecond count (such as gettimeofday gives). */
+misb_status misb_misp_from_posix_us(int64_t posix_us, uint64_t *misp_us);
+misb_status misb_misp_to_utc(uint64_t misp_us, misb_utc *out);
+int64_t misb_leap_seconds_valid_until(void);
 
 #ifdef __cplusplus
 }

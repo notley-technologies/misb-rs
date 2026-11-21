@@ -110,6 +110,9 @@ use crate::klv::{be_int, be_uint};
 use crate::registry::{decode_set, unknown_item};
 use crate::{Config, Field, Item, Standard, Value};
 
+#[cfg(feature = "encode")]
+pub(crate) mod encode;
+
 /// The 16-byte key that starts every ST 0601 UAS Datalink Local Set packet
 /// (ST 0601.19 section 6.2, registered in MISB ST 0807).
 pub const KEY: [u8; 16] = [
@@ -185,10 +188,14 @@ enum Codec {
     Time(Len),
     /// Unsigned integer times a factor: [`Value::Uint`].
     Scaled { len: usize, factor: u64 },
-    /// Unsigned integer mapped as `scale * x + offset`: [`Value::Float`].
-    Unsigned { len: usize, scale: f64, offset: f64 },
-    /// Signed integer mapped as `scale * x`, the most negative code special.
-    Signed { len: usize, scale: f64, special: Special },
+    /// Unsigned integer mapped as `range / (2^N - 1) * x + offset`:
+    /// [`Value::Float`]. The table keeps the range rather than the scale so
+    /// that the encoder can apply the standard's forward formula `round((x -
+    /// offset) * (2^N - 1) / range)` exactly.
+    Unsigned { len: usize, range: f64, offset: f64 },
+    /// Signed integer mapped as `range / (2^N - 2) * x` (the item covers
+    /// `+/-range/2`), the most negative code special.
+    Signed { len: usize, range: f64, special: Special },
     /// MISB ST 1201 IMAPB over `[min, max]`, 1 to `max_len` bytes.
     Imapb { min: f64, max: f64, max_len: usize },
     /// UTF-8 string: [`Value::Text`].
@@ -235,23 +242,23 @@ struct Desc {
 }
 
 // Mappings shared by several tags (ST 0601.19 section 8 summary tables).
-const HEADING: Codec = Codec::Unsigned { len: 2, scale: 360.0 / U16, offset: 0.0 };
-const ALTITUDE: Codec = Codec::Unsigned { len: 2, scale: 19_900.0 / U16, offset: -900.0 };
-const FIELD_OF_VIEW: Codec = Codec::Unsigned { len: 2, scale: 180.0 / U16, offset: 0.0 };
-const ANGLE_U32: Codec = Codec::Unsigned { len: 4, scale: 360.0 / U32, offset: 0.0 };
-const RANGE_U32: Codec = Codec::Unsigned { len: 4, scale: 5_000_000.0 / U32, offset: 0.0 };
-const PRESSURE: Codec = Codec::Unsigned { len: 2, scale: 5_000.0 / U16, offset: 0.0 };
-const TEN_THOUSAND: Codec = Codec::Unsigned { len: 2, scale: 10_000.0 / U16, offset: 0.0 };
-const HUNDRED_U8: Codec = Codec::Unsigned { len: 1, scale: 100.0 / U8, offset: 0.0 };
-const ERROR_ESTIMATE: Codec = Codec::Unsigned { len: 2, scale: 4_095.0 / U16, offset: 0.0 };
-const ANGLE_20: Codec = Codec::Signed { len: 2, scale: 40.0 / S16, special: Special::OutOfRange };
-const VELOCITY: Codec = Codec::Signed { len: 2, scale: 654.0 / S16, special: Special::OutOfRange };
-const FULL_90: Codec = Codec::Signed { len: 4, scale: 180.0 / S32, special: Special::OutOfRange };
-const LAT_RESERVED: Codec = Codec::Signed { len: 4, scale: 180.0 / S32, special: Special::Reserved };
-const LON_RESERVED: Codec = Codec::Signed { len: 4, scale: 360.0 / S32, special: Special::Reserved };
-const LAT_OFF_EARTH: Codec = Codec::Signed { len: 4, scale: 180.0 / S32, special: Special::OffEarth };
-const LON_OFF_EARTH: Codec = Codec::Signed { len: 4, scale: 360.0 / S32, special: Special::OffEarth };
-const CORNER_OFFSET: Codec = Codec::Signed { len: 2, scale: 0.15 / S16, special: Special::OffEarth };
+const HEADING: Codec = Codec::Unsigned { len: 2, range: 360.0, offset: 0.0 };
+const ALTITUDE: Codec = Codec::Unsigned { len: 2, range: 19_900.0, offset: -900.0 };
+const FIELD_OF_VIEW: Codec = Codec::Unsigned { len: 2, range: 180.0, offset: 0.0 };
+const ANGLE_U32: Codec = Codec::Unsigned { len: 4, range: 360.0, offset: 0.0 };
+const RANGE_U32: Codec = Codec::Unsigned { len: 4, range: 5_000_000.0, offset: 0.0 };
+const PRESSURE: Codec = Codec::Unsigned { len: 2, range: 5_000.0, offset: 0.0 };
+const TEN_THOUSAND: Codec = Codec::Unsigned { len: 2, range: 10_000.0, offset: 0.0 };
+const HUNDRED_U8: Codec = Codec::Unsigned { len: 1, range: 100.0, offset: 0.0 };
+const ERROR_ESTIMATE: Codec = Codec::Unsigned { len: 2, range: 4_095.0, offset: 0.0 };
+const ANGLE_20: Codec = Codec::Signed { len: 2, range: 40.0, special: Special::OutOfRange };
+const VELOCITY: Codec = Codec::Signed { len: 2, range: 654.0, special: Special::OutOfRange };
+const FULL_90: Codec = Codec::Signed { len: 4, range: 180.0, special: Special::OutOfRange };
+const LAT_RESERVED: Codec = Codec::Signed { len: 4, range: 180.0, special: Special::Reserved };
+const LON_RESERVED: Codec = Codec::Signed { len: 4, range: 360.0, special: Special::Reserved };
+const LAT_OFF_EARTH: Codec = Codec::Signed { len: 4, range: 180.0, special: Special::OffEarth };
+const LON_OFF_EARTH: Codec = Codec::Signed { len: 4, range: 360.0, special: Special::OffEarth };
+const CORNER_OFFSET: Codec = Codec::Signed { len: 2, range: 0.15, special: Special::OffEarth };
 const HEIGHT_EXTENDED: Codec = Codec::Imapb { min: -900.0, max: 40_000.0, max_len: 8 };
 const HEIGHT_AGL: Codec = Codec::Imapb { min: -900.0, max: 40_000.0, max_len: 4 };
 const ANGLE_RATE: Codec = Codec::Imapb { min: -1_000.0, max: 1_000.0, max_len: 4 };
@@ -300,7 +307,7 @@ tags! {
     /// Item 7 (8.7): int16 mapped to +/-50 deg, right wing down positive;
     /// `0x8000` is [`Value::OutOfRange`]. Tag 91 is the full-range form.
     7, PlatformRollAngle, "Platform Roll Angle", "deg",
-        Codec::Signed { len: 2, scale: 100.0 / S16, special: Special::OutOfRange };
+        Codec::Signed { len: 2, range: 100.0, special: Special::OutOfRange };
     /// Item 8 (8.8): uint8, 0..255 m/s ([`Value::Uint`]).
     8, PlatformTrueAirspeed, "Platform True Airspeed", "m/s", Codec::Uint(Len::Exact(1));
     /// Item 9 (8.9): uint8, 0..255 m/s ([`Value::Uint`]).
@@ -399,9 +406,10 @@ tags! {
     /// Item 47 (8.47, Table 3): bit flags as a [`Value::Struct`] of
     /// [`Value::Enum`] fields (code 0 or 1 with the meaning as label):
     /// "Laser Range", "Auto-Track", "IR Polarity", "Icing Status", "Slant
-    /// Range", "Image Invalid". The flags are read from the last byte, where
-    /// 8.47.1 keeps them when more bytes are added; ST 0601.13 to .16
-    /// inverted the meanings by mistake.
+    /// Range", "Image Invalid". Exactly one byte with bits 6 and 7 zero
+    /// (Required Length 1, ST 0601.13-29; DECISIONS P-4), anything else is
+    /// [`Value::Invalid`]; ST 0601.13 to .16 inverted the meanings by
+    /// mistake.
     47, GenericFlagData, "Generic Flag Data", "", Codec::Pack(generic_flag_data);
     /// Item 48 (8.48): nested MISB ST 0102 Security Metadata Local Set
     /// ([`Value::Set`] of [`Standard::St0102`]).
@@ -414,7 +422,7 @@ tags! {
     /// Item 51 (8.51): int16 mapped to +/-180 m/s, ascending positive;
     /// `0x8000` is [`Value::OutOfRange`].
     51, PlatformVerticalSpeed, "Platform Vertical Speed", "m/s",
-        Codec::Signed { len: 2, scale: 360.0 / S16, special: Special::OutOfRange };
+        Codec::Signed { len: 2, range: 360.0, special: Special::OutOfRange };
     /// Item 52 (8.52): int16 mapped to +/-20 deg; `0x8000` is
     /// [`Value::OutOfRange`]. Tag 93 is the full-range form.
     52, PlatformSideslipAngle, "Platform Sideslip Angle", "deg", ANGLE_20;
@@ -534,7 +542,7 @@ tags! {
     /// Item 93 (8.93): int32 mapped to +/-180 deg; `0x8000_0000` is
     /// [`Value::OutOfRange`].
     93, PlatformSideslipAngleFull, "Platform Sideslip Angle (Full)", "deg",
-        Codec::Signed { len: 4, scale: 360.0 / S32, special: Special::OutOfRange };
+        Codec::Signed { len: 4, range: 360.0, special: Special::OutOfRange };
     /// Item 94 (8.94): MISB ST 1204 MIIS Core Identifier, binary value
     /// without the ST 1204 key and length; decoded by the crate's ST 1204
     /// module.
@@ -669,8 +677,11 @@ tags! {
     /// Item 135 (8.135): communications method ([`Value::Text`]).
     135, CommunicationsMethod, "Communications Method", "", TEXT;
     /// Item 136 (8.136): two's complement int of 1 to 4 bytes, leap seconds
-    /// since the MISP epoch ([`Value::Int`]); tag 2 plus this many seconds
-    /// is UTC.
+    /// since the MISP epoch ([`Value::Int`]): `round(TAI - UTC - 8.000082 s)`,
+    /// 29 for instants since 2017-01-01. UTC is approximately tag 2 *minus*
+    /// this many seconds (to within the 82 us the rounding drops; an exact
+    /// conversion uses a leap second table, see [`crate::MispTime`])
+    /// (DECISIONS X-5, P-3).
     136, LeapSeconds, "Leap Seconds", "s", Codec::Int(Len::UpTo(4));
     /// Item 137 (8.137): two's complement int of 1 to 8 bytes, microseconds
     /// to add to tag 2 ([`Value::Int`]).
@@ -765,11 +776,11 @@ fn decode_value(tag: Tag, codec: Codec, v: &[u8], depth: usize, cfg: &Config) ->
         Codec::Scaled { len, factor } => {
             Len::Exact(len).check(v).and_then(uint).map(|x| Value::Uint(x.saturating_mul(factor)))
         }
-        Codec::Unsigned { len, scale, offset } => {
-            Len::Exact(len).check(v).and_then(uint).map(|x| Value::Float(scale * x as f64 + offset))
+        Codec::Unsigned { len, range, offset } => {
+            Len::Exact(len).check(v).and_then(uint).map(|x| Value::Float(range / span_u(len) * x as f64 + offset))
         }
-        Codec::Signed { len, scale, special } => {
-            Len::Exact(len).check(v).and_then(|v| signed(v, scale, special))
+        Codec::Signed { len, range, special } => {
+            Len::Exact(len).check(v).and_then(|v| signed(v, range / span_s(len), special))
         }
         Codec::Imapb { min, max, max_len } => {
             Len::UpTo(max_len).check(v).map(|v| imapb::decode(min, max, v))
@@ -783,6 +794,23 @@ fn decode_value(tag: Tag, codec: Codec, v: &[u8], depth: usize, cfg: &Config) ->
         Codec::Pack(decode) => decode(v, cfg),
     };
     value.unwrap_or_else(Value::Invalid)
+}
+
+/// `2^N - 1` for an N-byte unsigned mapped item (1, 2 or 4 bytes).
+fn span_u(len: usize) -> f64 {
+    match len {
+        1 => U8,
+        2 => U16,
+        _ => U32,
+    }
+}
+
+/// `2^N - 2` for an N-byte signed mapped item (2 or 4 bytes).
+fn span_s(len: usize) -> f64 {
+    match len {
+        2 => S16,
+        _ => S32,
+    }
 }
 
 /// ST 0601.19 section 6.5: every item may be a zero-length item except the
@@ -823,8 +851,14 @@ fn signed(v: &[u8], scale: f64, special: Special) -> Result<Value, &'static str>
     Ok(Value::Float(scale * int(v)? as f64))
 }
 
-/// ISO 646 / UTF-8 text; invalid sequences become U+FFFD.
+/// ISO 646 / UTF-8 text; invalid sequences become U+FFFD. The single byte
+/// `00` is the empty string (MISB ST 0107.4 section 6.3.3.2: "The empty
+/// string uses a single null character (0x00)"; DECISIONS P-1), so that
+/// decoding then encoding gives the same bytes.
 fn text(v: &[u8]) -> Value {
+    if v == [0] {
+        return Value::Text(String::new());
+    }
     Value::Text(String::from_utf8_lossy(v).into_owned())
 }
 
@@ -919,20 +953,27 @@ impl<'a> Reader<'a> {
     }
 }
 
+/// Item 47 flags, bit 0 first (Table 3): field name, meaning of 0, of 1.
+const GENERIC_FLAGS: [(&str, &str, &str); 6] = [
+    ("Laser Range", "Laser off", "Laser on"),
+    ("Auto-Track", "Auto-Track off", "Auto-Track on"),
+    ("IR Polarity", "White Hot", "Black Hot"),
+    ("Icing Status", "No Icing Detected", "Icing Detected"),
+    ("Slant Range", "Calculated", "Measured"),
+    ("Image Invalid", "Image Valid", "Image Invalid"),
+];
+
 /// Item 47 (8.47, Table 3).
 fn generic_flag_data(v: &[u8], _: &Config) -> Result<Value, &'static str> {
-    // 8.47.1: flags added later go into more significant bytes, so the
-    // defined ones are always in the last byte.
-    let bits = *Len::UpTo(8).check(v)?.last().ok_or(BAD_LENGTH)?;
-    const FLAGS: [(&str, &str, &str); 6] = [
-        ("Laser Range", "Laser off", "Laser on"),
-        ("Auto-Track", "Auto-Track off", "Auto-Track on"),
-        ("IR Polarity", "White Hot", "Black Hot"),
-        ("Icing Status", "No Icing Detected", "Icing Detected"),
-        ("Slant Range", "Calculated", "Measured"),
-        ("Image Invalid", "Image Valid", "Image Invalid"),
-    ];
-    let fields = FLAGS
+    // Required Length 1 (ST 0601.13-29: exactly that many bytes) and bits 6
+    // and 7 reserved as 0 (Table 3, R-ST0601-ENCODE-42). 8.47.1 foresees
+    // flags in more significant bytes, but no revision defines one, and
+    // accepting them would let decode and encode disagree (DECISIONS P-4).
+    let [bits] = <[u8; 1]>::try_from(v).map_err(|_| BAD_LENGTH)?;
+    if bits & 0xC0 != 0 {
+        return Err("generic flag data bits 6 and 7 must be 0");
+    }
+    let fields = GENERIC_FLAGS
         .iter()
         .enumerate()
         .map(|(bit, &(name, zero, one))| field(name, flag((bits >> bit) & 1 == 1, zero, one)))
@@ -1756,6 +1797,14 @@ mod tests {
     }
 
     #[test]
+    fn empty_string_is_a_single_null() {
+        // MISB ST 0107.4 6.3.3.2 (DECISIONS P-1): 00 is "", a ZLI is unknown.
+        assert_eq!(dec(3, &[0x00]), Value::Text(String::new()));
+        assert_eq!(dec(3, &[]), Value::Unknown);
+        assert_eq!(dec(3, &[0x00, 0x00]), Value::Text("\u{0}\u{0}".into()));
+    }
+
+    #[test]
     fn spec_example_generic_flags() {
         // 0x31: Laser on, Slant Range measured, Image Invalid.
         let v = tlv("2F 01 31").value;
@@ -1772,9 +1821,10 @@ mod tests {
         let all = dec(47, &[0x3F]);
         assert_eq!(get(&all, "IR Polarity"), &label(1, "Black Hot"));
         assert_eq!(get(&all, "Icing Status"), &label(1, "Icing Detected"));
-        // Future flags go into more significant bytes (8.47.1).
-        assert_eq!(dec(47, &[0xFF, 0x31]), v);
-        assert!(is_invalid(&dec(47, &[0; 9])));
+        // Exactly one byte, bits 6 and 7 zero (DECISIONS P-4).
+        assert!(is_invalid(&dec(47, &[0x00, 0x31])));
+        assert!(is_invalid(&dec(47, &[0x71])));
+        assert!(is_invalid(&dec(47, &[0x80])));
     }
 
     #[test]

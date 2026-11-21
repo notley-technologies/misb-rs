@@ -867,6 +867,8 @@ pub extern "C" fn misb_status_string(status: misb_status) -> *const c_char {
         MISB_ERR_PARSE => "not a complete ST 0601 packet\0",
         MISB_ERR_PANIC => "internal error\0",
         MISB_ERR_POISONED => "decoder unusable after an internal error\0",
+        MISB_ERR_ENCODE => "value or packet rejected by the encoder\0",
+        MISB_ERR_TOO_SMALL => "output buffer too small\0",
         _ => "unknown status\0",
     };
     s.as_ptr() as *const c_char
@@ -1198,6 +1200,9 @@ pub unsafe extern "C" fn misb_au_cell_next(
         }
     })
 }
+
+mod encode;
+pub use encode::*;
 
 #[cfg(test)]
 mod tests;
