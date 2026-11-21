@@ -65,8 +65,9 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
 name = "misb"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
+ "mpegts",
  "serde",
  "smpte-klv",
 ]
@@ -79,6 +80,11 @@ dependencies = [
  "misb",
  "serde_json",
 ]
+
+[[package]]
+name = "mpegts"
+version = "0.2.0"
+source = "git+https://github.com/notley-technologies/mpegts-rs?rev=a48700dc6eba70722afda56e2e9d9f547f15f59d#a48700dc6eba70722afda56e2e9d9f547f15f59d"
 
 [[package]]
 name = "proc-macro2"
