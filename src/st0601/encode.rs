@@ -768,6 +768,25 @@ fn parse_uuid(s: &str) -> Option<[u8; 16]> {
     Some(out)
 }
 
+/// The range of an item that holds a plain number, from its codec: mapped
+/// and IMAPB items, and unmapped integers (which the encoder rounds from a
+/// real value). `None` for text, enumerations, times, sets, packs and
+/// bytes. The track sampler (`crate::track`) interpolates only these.
+pub(crate) fn numeric_range(tag: Tag) -> Option<(f64, f64)> {
+    Some(match tag.desc().codec {
+        Codec::Uint(Len::Exact(n) | Len::UpTo(n)) => (0.0, max_uint(n) as f64),
+        Codec::Int(Len::Exact(n) | Len::UpTo(n)) => {
+            let (lo, hi) = int_range(n);
+            (lo as f64, hi as f64)
+        }
+        Codec::Scaled { len, factor } => (0.0, max_uint(len) as f64 * factor as f64),
+        Codec::Unsigned { range, offset, .. } => (offset, offset + range),
+        Codec::Signed { range, .. } => (-range / 2.0, range / 2.0),
+        Codec::Imapb { min, max, .. } => (min, max),
+        Codec::Time(_) | Codec::Text | Codec::Enum(_) | Codec::Set(_) | Codec::Bytes | Codec::Pack(_) => return None,
+    })
+}
+
 /// The JSON Schema of one item's authoring value (feature `json`), from
 /// its codec.
 #[cfg(feature = "json")]

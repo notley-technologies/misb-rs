@@ -4,6 +4,8 @@ use super::anchor::{wrap_pts, Anchor, PtsUnwrapper};
 use super::rate::{Rate, RateError, RateLimiter};
 use super::source::{Sample, SampleData, SampleError};
 use crate::encode::EncodeOptions;
+use crate::st0604::{Jump, Timestamp};
+use crate::track::{Track, TrackConfig, TrackError};
 use crate::MispTime;
 use std::collections::{BinaryHeap, VecDeque};
 use std::cmp::Reverse;
@@ -29,8 +31,9 @@ pub enum Carriage {
 }
 
 /// Where the MISP time line meets the program clock (MUXING_PLAN.md
-/// section 5). The input's own ST 0604 timestamps (the best anchor) and the
-/// live wall clock come in later phases.
+/// section 5). The input's own ST 0604 timestamps, the best anchor, are
+/// used on top of this with [`ScheduleConfig::video_anchor`]; the live wall
+/// clock is [`LiveAnchor`](super::LiveAnchor)'s.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum AnchorSpec {
@@ -83,6 +86,30 @@ pub struct ScheduleConfig {
     /// Frames held to put B-frames back in presentation order. Default 16
     /// (the H.264 and H.265 limit on reordering).
     pub reorder_depth: usize,
+    /// When sampling at frames, interpolate items through a [`Track`]
+    /// instead of using the latest sample as it is: each item moves
+    /// between the samples that carry it as its interpolation says
+    /// (linear, the short way around for angles, great circle for
+    /// latitude and longitude, held for text and codes; see
+    /// [`crate::track`]), with the samples' own hints
+    /// ([`Sample::interpolate`]) on top. Frames more than `max_hold_ms`
+    /// after the last sample get no metadata, as without a track; the
+    /// track's own staleness can also expire single items. `None` (the
+    /// default): no interpolation.
+    pub interpolate: Option<TrackConfig>,
+    /// Take MISP time from the input video's MISB ST 0604 timestamps when
+    /// it carries them (MUXING_PLAN.md section 5, st1402-time.md D-15),
+    /// ahead of [`anchor`](Self::anchor): the first frame with a timestamp
+    /// sets the anchor (before it, `anchor` applies), a frame's own
+    /// timestamp is the tag 2 of the metadata sampled at it (D-6), and the
+    /// anchor moves to a frame whose timestamp signals a discontinuity or
+    /// differs from the anchor's prediction by more than
+    /// [`video_anchor_tolerance_us`](Self::video_anchor_tolerance_us).
+    /// The caller passes the timestamps in with
+    /// [`Scheduler::frame_with_video`]. Default false.
+    pub video_anchor: bool,
+    /// See [`video_anchor`](Self::video_anchor). Default 1000 (1 ms).
+    pub video_anchor_tolerance_us: u32,
 }
 
 impl ScheduleConfig {
@@ -100,6 +127,9 @@ impl ScheduleConfig {
             max_hold_ms: Some(3000),
             snap_to_frames: false,
             reorder_depth: 16,
+            interpolate: None,
+            video_anchor: false,
+            video_anchor_tolerance_us: 1000,
         }
     }
 
@@ -161,6 +191,11 @@ pub struct ScheduleStats {
     pub unused: u64,
     /// Program clock discontinuities the time line was carried across.
     pub discontinuities: u64,
+    /// Frames whose ST 0604 timestamp was used ([`ScheduleConfig::video_anchor`]).
+    pub video_times: u64,
+    /// Times the anchor moved to a frame's ST 0604 timestamp after it was
+    /// first set.
+    pub reanchors: u64,
 }
 
 /// Why scheduling stopped.
@@ -176,6 +211,10 @@ pub enum ScheduleError {
     RecordedNeedsExplicit,
     /// A sample did not encode.
     Sample(SampleError),
+    /// A sample could not go into the track
+    /// ([`ScheduleConfig::interpolate`]), or the track could not be
+    /// sampled.
+    Track(TrackError),
 }
 
 impl fmt::Display for ScheduleError {
@@ -187,11 +226,18 @@ impl fmt::Display for ScheduleError {
                 f.write_str("recorded packets keep their own tag 2 and need Rate::Explicit; sample items instead")
             }
             ScheduleError::Sample(e) => e.fmt(f),
+            ScheduleError::Track(e) => e.fmt(f),
         }
     }
 }
 
 impl std::error::Error for ScheduleError {}
+
+impl From<TrackError> for ScheduleError {
+    fn from(e: TrackError) -> ScheduleError {
+        ScheduleError::Track(e)
+    }
+}
 
 impl From<SampleError> for ScheduleError {
     fn from(e: SampleError) -> ScheduleError {
@@ -238,6 +284,14 @@ pub struct Scheduler<S: Iterator<Item = Sample>> {
     waiting: VecDeque<(i64, Sample)>,
     /// The sample whose values hold at the current frame (sampling).
     current: Option<Sample>,
+    /// The interpolating track ([`ScheduleConfig::interpolate`]).
+    track: Option<Track>,
+    /// ST 0604 times of frames not yet presented: (unwrapped PTS, time).
+    video_times: VecDeque<(i64, MispTime)>,
+    /// A re-anchor not yet reported through [`Scheduler::take_jump`].
+    jump: Option<Jump>,
+    /// PTS of the last synchronous unit handed over (unwrapped).
+    last_unit: Option<i64>,
     last_time: Option<MispTime>,
     stats: ScheduleStats,
 }
@@ -252,7 +306,12 @@ impl<S: Iterator<Item = Sample>> Scheduler<S> {
     /// A scheduler reading `source`.
     pub fn new(cfg: ScheduleConfig, source: S) -> Result<Self, ScheduleError> {
         cfg.validate()?;
+        let track = cfg.interpolate.clone().map(Track::new);
         Ok(Scheduler {
+            track,
+            video_times: VecDeque::new(),
+            jump: None,
+            last_unit: None,
             rate: RateLimiter::new(cfg.rate).map_err(ScheduleError::Rate)?,
             anchor_spec: cfg.anchor,
             cfg,
@@ -299,10 +358,27 @@ impl<S: Iterator<Item = Sample>> Scheduler<S> {
         clock: Option<u64>,
         out: &mut dyn FnMut(ScheduledUnit) -> Result<(), E>,
     ) -> Result<(), Flow<E>> {
+        self.frame_with_video(frame, None, clock, out)
+    }
+
+    /// [`frame`](Self::frame) with the frame's MISB ST 0604 timestamp, when
+    /// its video carries one (decoded with [`crate::st0604::decode`] from
+    /// the access unit's SEI user data). Used with
+    /// [`ScheduleConfig::video_anchor`]; ignored otherwise.
+    pub fn frame_with_video<E>(
+        &mut self,
+        frame: &FrameTime,
+        video: Option<&Timestamp>,
+        clock: Option<u64>,
+        out: &mut dyn FnMut(ScheduledUnit) -> Result<(), E>,
+    ) -> Result<(), Flow<E>> {
         if frame.discontinuity && self.unwrap_seeded() {
             self.discontinuity(out)?;
         }
         let pts = self.unwrap.unwrap(frame.pts);
+        if let (true, Some(ts)) = (self.cfg.video_anchor, video) {
+            self.video_time(pts, ts);
+        }
         let dts = frame.dts.map_or(pts, |d| self.unwrap.peek(d));
         self.dts = Some(self.dts.map_or(dts, |d| d.max(dts)));
         self.reorder.push(Reverse(pts));
@@ -415,13 +491,27 @@ impl<S: Iterator<Item = Sample>> Scheduler<S> {
             };
         }
         let Some(anchor) = self.anchor else { return Ok(()) };
+        // The frame's own ST 0604 time, when it had one (D-6).
+        let mut own = None;
+        while let Some(&(p, t)) = self.video_times.front() {
+            if p > pts {
+                break;
+            }
+            self.video_times.pop_front();
+            if p == pts {
+                own = Some(t);
+            }
+        }
         if self.explicit() {
             if self.cfg.snap_to_frames && self.cfg.carriage == Carriage::Sync {
                 self.snap(pts, now, out)?;
             }
             return Ok(());
         }
-        let Some(time) = anchor.misp_at(pts) else { return Ok(()) };
+        let Some(time) = own.or_else(|| anchor.misp_at(pts)) else { return Ok(()) };
+        if self.track.is_some() {
+            return self.sample_track(pts, time, now, out);
+        }
         while self.source.peek().map_or(false, |s| s.time <= time) {
             if let Some(s) = self.next_sample() {
                 if matches!(s.data, SampleData::Packet(_)) {
@@ -444,6 +534,115 @@ impl<S: Iterator<Item = Sample>> Scheduler<S> {
         };
         self.current = Some(current);
         result
+    }
+
+    /// Sample the track at a presented frame (unwrapped PTS `pts`, MISP
+    /// time `time`), reading the source as far ahead as the track needs.
+    fn sample_track<E>(
+        &mut self,
+        pts: i64,
+        time: MispTime,
+        now: Option<i64>,
+        out: &mut dyn FnMut(ScheduledUnit) -> Result<(), E>,
+    ) -> Result<(), Flow<E>> {
+        loop {
+            let track = self.track.as_ref().expect("track mode");
+            if track.ready(time) || track.is_finished() {
+                break;
+            }
+            match self.next_sample() {
+                Some(s) => {
+                    let Some(k) = s.to_keyframe() else {
+                        return Err(Flow::Schedule(ScheduleError::RecordedNeedsExplicit));
+                    };
+                    self.track.as_mut().expect("track mode").push(k).map_err(|e| Flow::Schedule(e.into()))?;
+                }
+                None => self.track.as_mut().expect("track mode").finish(),
+            }
+        }
+        let track = self.track.as_mut().expect("track mode");
+        if track.earliest().map_or(false, |e| time < e) {
+            // Before every keyframe pushed so far: nothing to say yet.
+            return Ok(());
+        }
+        let snap = track.sample(time).map_err(|e| Flow::Schedule(e.into()))?;
+        track.prune(time);
+        // The source stopped: past its last sample by more than the hold.
+        let ended = match (self.cfg.max_hold_ms, track.last_time()) {
+            (Some(hold), Some(last)) => time.as_micros() > last.as_micros().saturating_add(u64::from(hold) * 1000),
+            _ => false,
+        };
+        if snap.is_empty() || ended {
+            if track.keyframes_pushed() > 0 {
+                self.stats.stale += 1;
+            }
+            return Ok(());
+        }
+        if !self.rate.admit(pts) {
+            return Ok(());
+        }
+        let sample = Sample {
+            time,
+            data: SampleData::Items { version: snap.version(), items: snap.to_items() },
+            interpolate: Vec::new(),
+        };
+        let unit_pts = (self.cfg.carriage == Carriage::Sync).then_some(pts);
+        self.emit(pts, unit_pts, &sample, time, now, out)
+    }
+
+    /// A frame (unwrapped PTS) with an ST 0604 timestamp: anchor on it, or
+    /// move the anchor when the timestamp says the time line jumped or
+    /// strays from the anchor's prediction (D-15).
+    fn video_time(&mut self, pts: i64, ts: &Timestamp) {
+        let time = ts.misp_time();
+        self.stats.video_times += 1;
+        if self.video_times.len() >= 4 * self.cfg.reorder_depth + 4 {
+            self.video_times.pop_front();
+        }
+        let at = self.video_times.partition_point(|&(p, _)| p < pts);
+        self.video_times.insert(at, (pts, time));
+        match self.anchor {
+            None => self.anchor = Some(Anchor::new(pts, time)),
+            Some(a) => {
+                let predicted = a.misp_at(pts);
+                let off = predicted.map_or(u64::MAX, |p| p.as_micros().abs_diff(time.as_micros()));
+                if ts.status.is_discontinuity() || off > u64::from(self.cfg.video_anchor_tolerance_us) {
+                    self.anchor = Some(Anchor::new(pts, time));
+                    self.stats.reanchors += 1;
+                    self.jump = Some(match predicted {
+                        Some(p) if time < p => Jump::Backward,
+                        _ => Jump::Forward,
+                    });
+                }
+            }
+        }
+    }
+
+    /// The MISP time of a frame, for writing its ST 0604 timestamp: the
+    /// anchor applied to its PTS. Call it after [`frame`](Self::frame) or
+    /// [`frame_with_video`](Self::frame_with_video) for the same frame.
+    /// With no anchor yet, one is set from the configured
+    /// [`AnchorSpec`] at this frame (so with B-frames the first frame in
+    /// decode order, not in presentation order, takes the anchor's time);
+    /// `None` when that is not possible yet (a [`AnchorSpec::SourceStart`]
+    /// source with no sample).
+    pub fn frame_time(&mut self, frame: &FrameTime) -> Option<MispTime> {
+        let pts = self.unwrap.peek(frame.pts);
+        if self.anchor.is_none() {
+            self.anchor = match self.anchor_spec {
+                AnchorSpec::FirstFrame(t) => Some(Anchor::new(pts, t)),
+                AnchorSpec::SourceStart => self.source.peek().map(|s| Anchor::new(pts, s.time)),
+                AnchorSpec::Pts { pts: p, misp } => Some(Anchor::new(self.unwrap.peek(p), misp)),
+            };
+        }
+        self.anchor?.misp_at(pts)
+    }
+
+    /// Whether the anchor moved since the last call, and which way: the
+    /// next ST 0604 timestamp written should signal the discontinuity in
+    /// its Time Status (st1402-time.md D-12).
+    pub fn take_jump(&mut self) -> Option<Jump> {
+        self.jump.take()
     }
 
     /// Move waiting recorded samples to the nearest frame once the frames
@@ -495,15 +694,20 @@ impl<S: Iterator<Item = Sample>> Scheduler<S> {
         now: Option<i64>,
         out: &mut dyn FnMut(ScheduledUnit) -> Result<(), E>,
     ) -> Result<(), Flow<E>> {
-        if unit_pts.is_some() {
+        if let Some(p) = unit_pts {
             let min_lead = i64::from(self.cfg.min_lead_ms) * TICKS_PER_MS;
-            if now.map_or(false, |now| pts - now < min_lead) {
+            // Units never go back in PTS (R-ISO13818-160); after the anchor
+            // moved back, those that would are late.
+            if now.map_or(false, |now| pts - now < min_lead) || self.last_unit.map_or(false, |l| p < l) {
                 self.stats.late += 1;
                 return Ok(());
             }
         }
         let data = s.encode_at(time, &self.cfg.encode).map_err(|e| Flow::Schedule(e.into()))?;
         out(ScheduledUnit { pts: unit_pts.map(wrap_pts), data }).map_err(Flow::Out)?;
+        if unit_pts.is_some() {
+            self.last_unit = Some(pts);
+        }
         self.stats.units += 1;
         Ok(())
     }
@@ -521,6 +725,8 @@ impl<S: Iterator<Item = Sample>> Scheduler<S> {
             _ => None,
         };
         self.unwrap.reset();
+        self.video_times.clear();
+        self.last_unit = None;
         self.dts = None;
         self.released = (None, None);
         self.rate.reset();

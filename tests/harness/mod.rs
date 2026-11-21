@@ -36,6 +36,28 @@ pub fn decode(data: &[u8]) {
     let (control, bytes) = data.split_first().map_or((0, &[][..]), |(c, rest)| (*c, rest));
     let cfg = config_from_control(control);
     check_stream(bytes, &cfg, hash(data));
+    check_st0604(control, bytes);
+}
+
+/// The ST 0604 reader on the same bytes, also behind a real identifier
+/// (picked by the control byte) so mutations reach the payload: it never
+/// panics, and a message it reads without warnings encodes back to the
+/// same 28 bytes.
+fn check_st0604(control: u8, bytes: &[u8]) {
+    use misb::st0604::{self, Identifier};
+    let mut framed = Identifier::ALL[usize::from(control) % 3].bytes().to_vec();
+    framed.extend_from_slice(bytes);
+    for input in [bytes, &framed[..]] {
+        let Ok(d) = st0604::decode(input) else { continue };
+        assert_eq!(d.warnings.trailing_bytes, input.len() - st0604::TIMESTAMP_LEN);
+        let _ = black_box(d.timestamp.misp_time());
+        // `capi` implies misb's `encode`, and is a feature of the fuzz
+        // crate too (which has no `encode` of its own).
+        #[cfg(feature = "capi")]
+        if d.warnings.is_empty() && d.timestamp.status.is_valid() {
+            assert_eq!(&d.timestamp.to_bytes().unwrap()[..], &input[..st0604::TIMESTAMP_LEN]);
+        }
+    }
 }
 
 /// Structured: the bytes are a program that builds a stream of ST 0601

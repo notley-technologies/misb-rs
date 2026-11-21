@@ -16,7 +16,9 @@
 //! security metadata (tag 48), [`st0806`] remote video terminal (tag 73),
 //! [`st0903`] VMTI (tag 74), [`st1204`] MIIS identifiers (tag 94), MISB ST
 //! 1607 Segment and Amend sets (tags 100 and 101, with the ST 0601 table)
-//! and [`st1010`] SDCC-FLP packs (tag 102). Values follow MISB ST 1201
+//! and [`st1010`] SDCC-FLP packs (tag 102). [`st0604`] reads (and with
+//! `encode` writes) the MISB ST 0604 timestamps carried in video. Values
+//! follow MISB ST 1201
 //! ([`imapb`]), ST 0603 ([`Value::Time`], which is MISP time, not UTC) and ST
 //! 0107 (a zero-length item is [`Value::Unknown`]). The ST 1206, ST 1002, ST
 //! 1601 and ST 1602 sets (tags 95, 97, 98, 99) stay [`Value::Bytes`].
@@ -35,6 +37,12 @@
 //!   [`Checksum`], [`Standard`], [`Error`], [`Stats`], [`Received`] and
 //!   [`Config`], and `Deserialize` for [`Config`]. The JSON format is
 //!   described at [`Value`]. Needs Rust 1.71; the library itself needs 1.70.
+//! - `encode` (implied by `capi`): the encoder (`misb::encode`), the live
+//!   metadata state with snapshots (`misb::state`), keyframe tracks with
+//!   interpolation (`misb::track`), and writing [`st0604`] timestamps.
+//! - `json`: the NDJSON authoring format, track keyframes from it, and the
+//!   live control commands (`misb::json`).
+//! - `mux`: inserting KLV into transport streams (`misb::mux`).
 //!
 //! A stable C ABI, built with `make` and installed with `make install`, is
 //! described in `include/misb.h`.
@@ -111,12 +119,19 @@ pub mod mux;
 mod registry;
 pub mod st0102;
 pub mod st0601;
+pub mod st0604;
 pub mod st0806;
 pub mod st0903;
 pub mod st1010;
 pub mod st1204;
+#[cfg(feature = "encode")]
+#[cfg_attr(docsrs, doc(cfg(feature = "encode")))]
+pub mod state;
 mod stream;
 mod time;
+#[cfg(feature = "encode")]
+#[cfg_attr(docsrs, doc(cfg(feature = "encode")))]
+pub mod track;
 mod value;
 
 pub use config::Config;
@@ -156,6 +171,21 @@ const _: () = {
     data::<AuCell<'static>>();
     data::<AuCells<'static>>();
     data::<imapb::Imapb>();
+    data::<st0604::Timestamp>();
+    data::<st0604::Decoded>();
+    data::<st0604::St0604Error>();
+};
+
+#[cfg(feature = "encode")]
+const _: () = {
+    use std::panic::{RefUnwindSafe, UnwindSafe};
+    const fn data<T: Send + Sync + UnwindSafe + RefUnwindSafe>() {}
+    data::<state::MetadataState>();
+    data::<state::Snapshot>();
+    data::<state::Staleness>();
+    data::<track::Track>();
+    data::<track::Keyframe>();
+    data::<track::TrackError>();
 };
 
 /// Decode exactly one ST 0601 packet at the start of `buf` with the default

@@ -252,3 +252,179 @@ fn a_clock_discontinuity_carries_the_time_line() {
     }
     assert_eq!(units[60].1.pts, Some(5_000_000_000));
 }
+
+fn keyframe(t: u64, lat: f64, heading: f64) -> Sample {
+    Sample::items(
+        MispTime::from_micros(t),
+        // Latitude and longitude move together along the great circle
+        // (here a meridian, where latitude moves linearly).
+        vec![
+            (Tag::SensorLatitude, Input::Float(lat)),
+            (Tag::SensorLongitude, Input::Float(10.0)),
+            (Tag::PlatformHeadingAngle, Input::Float(heading)),
+        ],
+    )
+}
+
+fn f64_of(p: &misb::Packet, tag: Tag) -> Option<f64> {
+    p.get(tag).and_then(Value::as_f64)
+}
+
+#[test]
+fn a_track_interpolates_between_samples() {
+    // Keyframes every 2 s: latitude 0, 2, 4; heading 350, 10, 30. The
+    // first also names the mission, once.
+    let mut first = keyframe(T0, 0.0, 350.0);
+    if let misb::mux::SampleData::Items { items, .. } = &mut first.data {
+        items.push((Tag::MissionId, Input::Text("TRACK".into())));
+    }
+    let samples = vec![first, keyframe(T0 + 2_000_000, 2.0, 10.0), keyframe(T0 + 4_000_000, 4.0, 30.0)];
+    let mut cfg = ScheduleConfig::new(Carriage::Sync);
+    cfg.rate = Rate::EveryFrame;
+    cfg.interpolate = Some(misb::track::TrackConfig::new());
+    let mut s = Scheduler::new(cfg, samples.into_iter()).unwrap();
+    let units = run(&mut s, &plain(P0, 300));
+    // Frames from 0 to 4 s, plus 3 s of hold after the last keyframe.
+    let held = (7_000_000u64 * 9 / 100) / FRAME + 1;
+    assert_eq!(units.len() as u64, held);
+    assert_eq!(s.stats().stale, 300 - held);
+    for (n, (_, u)) in units.iter().enumerate() {
+        let p = misb::decode(&u.data).unwrap();
+        let t = time_of(u);
+        assert_eq!(t, T0 + (n as u64 * FRAME * 100) / 9);
+        let secs = (t - T0) as f64 / 1e6;
+        let lat = f64_of(&p, Tag::SensorLatitude).unwrap();
+        // Linear up to 4 s, then held; within the ST 0601 LSB of tag 13.
+        assert!((lat - secs.min(4.0)).abs() < 1e-7, "frame {n}: {lat} at {secs}");
+        let heading = f64_of(&p, Tag::PlatformHeadingAngle).unwrap();
+        let want = if secs <= 2.0 { (350.0 + 10.0 * secs) % 360.0 } else { 10.0 + 10.0 * (secs.min(4.0) - 2.0) };
+        let diff = (heading - want).abs().min(360.0 - (heading - want).abs());
+        assert!(diff < 0.01, "frame {n}: heading {heading}, want {want}");
+        assert_eq!(p.get(Tag::MissionId).and_then(Value::as_str), Some("TRACK"), "text holds");
+    }
+}
+
+#[test]
+fn track_hints_override_the_defaults() {
+    let samples = vec![
+        keyframe(T0, 10.0, 0.0).with_interpolation(Tag::SensorLatitude, misb::track::Interpolation::Hold),
+        keyframe(T0 + 1_000_000, 20.0, 0.0),
+    ];
+    let mut cfg = ScheduleConfig::new(Carriage::Sync);
+    cfg.rate = Rate::EveryFrame;
+    cfg.interpolate = Some(misb::track::TrackConfig::new());
+    let mut s = Scheduler::new(cfg, samples.into_iter()).unwrap();
+    let units = run(&mut s, &plain(P0, 20));
+    for (_, u) in &units {
+        let p = misb::decode(&u.data).unwrap();
+        let lat = f64_of(&p, Tag::SensorLatitude).unwrap();
+        let want = if time_of(u) < T0 + 1_000_000 { 10.0 } else { 20.0 };
+        assert!((lat - want).abs() < 1e-6);
+    }
+    assert_eq!(units.len(), 20);
+}
+
+#[test]
+fn recorded_packets_cannot_go_into_a_track() {
+    let mut cfg = ScheduleConfig::new(Carriage::Sync);
+    cfg.rate = Rate::EveryFrame;
+    cfg.interpolate = Some(misb::track::TrackConfig::new());
+    let mut s = Scheduler::new(cfg, vec![recorded(T0)].into_iter()).unwrap();
+    let f = &plain(P0, 1)[0];
+    let r = s.frame(&f.frame, Some(f.clock), &mut |_: ScheduledUnit| -> Result<(), Infallible> { Ok(()) });
+    let r = r.and_then(|()| s.finish(Some(f.clock), &mut |_| -> Result<(), Infallible> { Ok(()) }).map(|_| ()));
+    assert_eq!(r, Err(Flow::Schedule(ScheduleError::RecordedNeedsExplicit)));
+}
+
+/// Run frames with ST 0604 times.
+fn run_video<S: Iterator<Item = Sample>>(
+    s: &mut Scheduler<S>,
+    frames: &[F],
+    video: &dyn Fn(usize) -> Option<misb::st0604::Timestamp>,
+) -> Vec<ScheduledUnit> {
+    let mut units = Vec::new();
+    for (i, f) in frames.iter().enumerate() {
+        let ts = video(i);
+        s.frame_with_video(&f.frame, ts.as_ref(), Some(f.clock), &mut |u: ScheduledUnit| -> Result<(), Infallible> {
+            units.push(u);
+            Ok(())
+        })
+        .unwrap();
+    }
+    s.finish(frames.last().map(|f| f.clock), &mut |u| -> Result<(), Infallible> {
+        units.push(u);
+        Ok(())
+    })
+    .unwrap();
+    units
+}
+
+fn st0604(us: u64, status: misb::st0604::TimeStatus) -> misb::st0604::Timestamp {
+    misb::st0604::Timestamp::new(misb::st0604::Identifier::MispMicrosectime, status, us)
+}
+
+#[test]
+fn st0604_timestamps_in_the_video_anchor_the_time_line() {
+    use misb::st0604::TimeStatus;
+    // The video's own clock: V0 at the first frame, 33 366 or 33 367 us a
+    // frame, and a jump of +5 s flagged as a discontinuity at frame 150.
+    const V0: u64 = 1_750_000_000_000_000;
+    let frame_us = |n: u64| (n * FRAME * 100) / 9;
+    let video = |n: usize| -> Option<misb::st0604::Timestamp> {
+        let n = n as u64;
+        Some(if n < 150 {
+            st0604(V0 + frame_us(n), TimeStatus::LOCKED)
+        } else {
+            let status = if n == 150 { TimeStatus::LOCKED_FORWARD_JUMP } else { TimeStatus::LOCKED };
+            st0604(V0 + 5_000_000 + frame_us(n), status)
+        })
+    };
+    let samples: Vec<Sample> = (0..20).map(|k| items(V0 + k * 1_000_000, k as f64)).collect();
+    let mut cfg = ScheduleConfig::new(Carriage::Sync);
+    cfg.rate = Rate::EveryFrame;
+    // Ignored once the video has timestamps.
+    cfg.anchor = AnchorSpec::FirstFrame(MispTime::from_micros(T0));
+    cfg.video_anchor = true;
+    let mut s = Scheduler::new(cfg, samples.into_iter()).unwrap();
+    let units = run_video(&mut s, &plain(P0, 300), &video);
+    assert_eq!(units.len(), 300);
+    for (n, u) in units.iter().enumerate() {
+        assert_eq!(Some(time_of(u)), video(n).map(|v| v.value), "frame {n}: tag 2 is the frame's ST 0604 time");
+    }
+    let st = s.stats();
+    assert_eq!((st.video_times, st.reanchors), (300, 1));
+    assert_eq!(s.take_jump(), Some(misb::st0604::Jump::Forward));
+    assert_eq!(s.take_jump(), None);
+    assert_eq!(s.anchor(), Some(Anchor::new((P0 + 150 * FRAME) as i64, MispTime::from_micros(V0 + 5_000_000 + frame_us(150)))));
+}
+
+#[test]
+fn without_st0604_the_configured_anchor_applies() {
+    let samples: Vec<Sample> = (0..3).map(|k| items(T0 + k * 1_000_000, k as f64)).collect();
+    let mut cfg = ScheduleConfig::new(Carriage::Sync);
+    cfg.rate = Rate::EveryFrame;
+    cfg.anchor = AnchorSpec::FirstFrame(MispTime::from_micros(T0));
+    cfg.video_anchor = true;
+    let mut s = Scheduler::new(cfg, samples.into_iter()).unwrap();
+    let units = run_video(&mut s, &plain(P0, 30), &|_| None);
+    assert_eq!(units.len(), 30);
+    assert_eq!(time_of(&units[0]), T0);
+    assert_eq!(s.stats().video_times, 0);
+}
+
+#[test]
+fn frame_time_anchors_the_first_frame_for_timestamp_writers() {
+    let mut cfg = ScheduleConfig::new(Carriage::Sync);
+    cfg.rate = Rate::EveryFrame;
+    cfg.anchor = AnchorSpec::FirstFrame(MispTime::from_micros(T0));
+    let mut s = Scheduler::new(cfg, std::iter::empty()).unwrap();
+    let frames = with_b_frames(P0, 7);
+    let mut times = Vec::new();
+    for f in &frames {
+        s.frame(&f.frame, Some(f.clock), &mut |_| -> Result<(), Infallible> { Ok(()) }).unwrap();
+        times.push(s.frame_time(&f.frame).unwrap().as_micros());
+    }
+    // Decode order I0 P3 B1 B2 P6 B4 B5: each frame's own time.
+    let want: Vec<u64> = frames.iter().map(|f| T0 + ((f.frame.pts - P0) * 100) / 9).collect();
+    assert_eq!(times, want);
+}

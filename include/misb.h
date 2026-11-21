@@ -566,6 +566,65 @@ misb_status misb_misp_from_posix_us(int64_t posix_us, uint64_t *misp_us);
 misb_status misb_misp_to_utc(uint64_t misp_us, misb_utc *out);
 int64_t misb_leap_seconds_valid_until(void);
 
+/* ------------------------------------------------------------ ST 0604 timestamps */
+
+/* MISB ST 0604.6 timestamps in video: 28 bytes, a 16-byte identifier, the
+ * MISB ST 0603 Time Status byte and the 8-byte time written most
+ * significant byte first with 0xFF after every two bytes. In H.264 and
+ * H.265 they are a user_data_unregistered SEI message (uuid_iso_iec_11578
+ * then user_data_payload_byte); in MPEG-2 video they follow a user_data
+ * start code 00 00 01 B2. These functions read and write the bytes;
+ * finding them in the video (start codes, emulation prevention, SEI
+ * framing) is the video parser's job. */
+
+/* misb_st0604.identifier: which identifier, and so which unit. */
+#define MISB_ST0604_ID_MICROSEC 1      /* "MISPmicrosectime": H.262/MPEG-2 and H.264, microseconds */
+#define MISB_ST0604_ID_HEVC_MICROSEC 2 /* H.265 UUID a8687dd4-d759-3758-a5ce-f0338b6545f1, microseconds */
+#define MISB_ST0604_ID_HEVC_NANOSEC 3  /* H.265 UUID cf848278-ee23-306c-9265-e8fef22fb8b8, nanoseconds */
+
+/* misb_st0604.status, the Time Status byte: bit 7 set when the lock to an
+ * absolute time reference is unknown, bit 6 at a discontinuity, bit 5 (with
+ * bit 6) when time jumped backward, bits 4 to 0 reserved (all 1). The six
+ * values an encoder writes: */
+#define MISB_ST0604_STATUS_LOCKED 0x1F
+#define MISB_ST0604_STATUS_LOCK_UNKNOWN 0x9F /* the default for times computed from an anchor */
+#define MISB_ST0604_STATUS_LOCKED_FORWARD_JUMP 0x5F
+#define MISB_ST0604_STATUS_LOCKED_BACKWARD_JUMP 0x7F
+#define MISB_ST0604_STATUS_LOCK_UNKNOWN_FORWARD_JUMP 0xDF
+#define MISB_ST0604_STATUS_LOCK_UNKNOWN_BACKWARD_JUMP 0xFF
+
+/* misb_st0604.warnings: what misb_st0604_decode tolerated (bit flags). */
+#define MISB_ST0604_WARN_SEPARATOR 0x1 /* a separator byte (byte 20, 23 or 26) is not 0xFF */
+#define MISB_ST0604_WARN_RESERVED 0x2  /* the reserved Time Status bits are not all 1 */
+#define MISB_ST0604_WARN_REVERSE 0x4   /* Time Status bit 5 set without bit 6 */
+#define MISB_ST0604_WARN_TRAILING 0x8  /* bytes after the 28, ignored */
+
+typedef struct misb_st0604 {
+    uint32_t struct_size;
+    uint32_t identifier; /* MISB_ST0604_ID_* */
+    uint32_t status;     /* Time Status byte, 0 to 255 */
+    uint32_t warnings;   /* MISB_ST0604_WARN_* (set by decode; ignored by encode) */
+    uint64_t value;      /* MISP time in microseconds, or nanoseconds for MISB_ST0604_ID_HEVC_NANOSEC */
+    uint64_t misp_us;    /* set by decode: value in MISP microseconds, nanoseconds rounded half up
+                          * ((ns + 500) / 1000); ignored by encode */
+} misb_st0604;
+
+/* Read the 28 bytes at data (any further bytes are ignored, with
+ * MISB_ST0604_WARN_TRAILING). Any of the three identifiers is accepted
+ * whatever the codec. MISB_EMPTY when the first 16 bytes are not an ST 0604
+ * identifier (out is untouched), MISB_ERR_PARSE when fewer than 28 bytes
+ * are given. */
+misb_status misb_st0604_decode(const uint8_t *data, size_t len, misb_st0604 *out);
+/* Write the 28 bytes (misb_st0604_encode) or the 12 bytes after the
+ * identifier, the SEI user_data_payload_byte (misb_st0604_encode_payload),
+ * into buf (cap bytes). The caller's struct must include `value`.
+ * MISB_ERR_INVALID for an unknown identifier or a status that is not one of
+ * the six values above; MISB_ERR_TOO_SMALL sets *len to the size needed. The
+ * 0xFF bytes are ST 0604's own: an SEI NAL unit still needs H.264/H.265
+ * emulation prevention. */
+misb_status misb_st0604_encode(const misb_st0604 *timestamp, uint8_t *buf, size_t cap, size_t *len);
+misb_status misb_st0604_encode_payload(const misb_st0604 *timestamp, uint8_t *buf, size_t cap, size_t *len);
+
 #ifdef __cplusplus
 }
 #endif

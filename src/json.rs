@@ -26,8 +26,10 @@
 //!   labels or text), checked like [`crate::encode::Security::encode`].
 //!   Nested sets (tags 48, 74) also accept the decoder's own JSON of a set.
 //! - `version` overrides tag 65; `interpolate` maps tags to `"hold"`,
-//!   `"linear"`, `"angle"` or `"geodesic"` for the track sampler of a later
-//!   release (parsed and checked, not used by the packet encoder).
+//!   `"linear"`, `"angle"` or `"geodesic"` ([`Interpolation`]) for a
+//!   [`crate::track::Track`]: [`Record::to_keyframe`] (or `From`) turns a
+//!   record into a track keyframe with its hints. The packet encoder
+//!   ignores them.
 //!
 //! A line in the decoder's own JSON (the `misb` serde output of a
 //! [`crate::Packet`], or the `{"offset":..,"packet":{..}}` lines of the
@@ -35,8 +37,27 @@
 //! [`crate::encode::encode_packet`], so `decode -> JSON -> edit -> encode`
 //! works and unchanged items keep their recorded bytes. [`schema`] returns
 //! the JSON Schema of the authoring format, generated from the tag table.
+//!
+//! # Live control commands
+//!
+//! A live injector's control channel takes one command object per line
+//! (MUXING_PLAN.md section 6.7), applied to a
+//! [`MetadataState`]:
+//!
+//! ```json
+//! {"set": {"SensorLatitude": 38.8, "SlantRange": null}}
+//! {"clear": ["MissionId", "13"]}
+//! {"clear_all": true, "set": {"MissionId": "M2"}, "version": 19, "emit": true}
+//! ```
+//!
+//! [`parse_commands`] reads a line into [`Command`]s (the order they apply
+//! in is documented there), [`apply_commands`] applies them to a state as
+//! one change and reports whether a packet was asked for, and
+//! [`apply_line`] does both. [`control_schema`] is their JSON Schema.
 
 use crate::encode::{encode_packet, EncodeError, EncodeOptions, Input, Security, St0601Builder};
+use crate::state::MetadataState;
+use crate::track::Keyframe;
 use crate::{st0102, st0601, Field, Item, LeapSeconds, MispTime, Packet, Standard, UtcDateTime, Value};
 use serde_json::{Map, Value as Json};
 use std::fmt;
@@ -71,19 +92,9 @@ impl From<EncodeError> for JsonError {
     }
 }
 
-/// How a track sampler should fill in a tag between keyframes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum Interpolation {
-    /// Keep the last value.
-    Hold,
-    /// Linear between keyframes.
-    Linear,
-    /// Linear on the shorter way around the circle.
-    Angle,
-    /// Along the great circle (latitude and longitude pairs).
-    Geodesic,
-}
+/// How a track fills in a tag between keyframes; defined in
+/// [`crate::track`] and re-exported here, where it first appeared.
+pub use crate::track::Interpolation;
 
 /// One authoring record.
 #[derive(Clone, Debug, PartialEq)]
@@ -114,6 +125,26 @@ impl Record {
             };
         }
         Ok(b)
+    }
+
+    /// The [`Keyframe`] of this record for a [`crate::track::Track`]: its
+    /// time, version, items and interpolation hints.
+    #[must_use]
+    pub fn to_keyframe(&self) -> Keyframe {
+        Keyframe {
+            time: self.time,
+            version: self.version,
+            items: self.items.clone(),
+            interpolate: self.interpolate.clone(),
+        }
+    }
+}
+
+impl From<Record> for Keyframe {
+    /// The keyframe of an authoring record (one NDJSON line), interpolation
+    /// hints included.
+    fn from(r: Record) -> Keyframe {
+        Keyframe { time: r.time, version: r.version, items: r.items, interpolate: r.interpolate }
     }
 }
 
@@ -203,13 +234,10 @@ fn parse_record_json(json: &Json, table: &LeapSeconds) -> Result<Record, JsonErr
     if let Some(map) = obj.get("interpolate") {
         let map = map.as_object().ok_or_else(|| JsonError::new("interpolate is an object"))?;
         for (key, value) in map {
-            let how = match value.as_str() {
-                Some("hold") => Interpolation::Hold,
-                Some("linear") => Interpolation::Linear,
-                Some("angle") => Interpolation::Angle,
-                Some("geodesic") => Interpolation::Geodesic,
-                _ => return Err(JsonError::new(format!("{key}: interpolation is hold, linear, angle or geodesic"))),
-            };
+            let how = value
+                .as_str()
+                .and_then(Interpolation::from_name)
+                .ok_or_else(|| JsonError::new(format!("{key}: interpolation is hold, linear, angle or geodesic")))?;
             interpolate.push((st0601_tag(key)?, how));
         }
     }
@@ -429,6 +457,210 @@ fn security(o: &Map<String, Json>) -> Result<Security, JsonError> {
     Ok(s)
 }
 
+// ------------------------------------------------------- control commands
+
+/// One live control command (MUXING_PLAN.md section 6.7), for the control
+/// channel of a live injector driven by a [`MetadataState`].
+///
+/// A command line is one JSON object; its keys combine freely and
+/// [`parse_commands`] returns them in the order they are applied:
+///
+/// 1. `"clear_all": true`: [`Command::ClearAll`];
+/// 2. `"clear": [keys]`: [`Command::Clear`];
+/// 3. `"set": {items}`: [`Command::Set`];
+/// 4. `"unknown": [keys]`: [`Command::Unknown`];
+/// 5. `"version": n` or `null`: [`Command::Version`];
+/// 6. `"emit": true`: [`Command::Emit`].
+///
+/// So `{"clear_all": true, "set": {..}}` replaces the whole state. Keys and
+/// values of `set` are exactly those of an authoring record's `items`
+/// (`null` marks an item unknown), and the keys of `clear` and `unknown`
+/// are tag numbers (as strings or numbers), variant names or the
+/// standard's names. One tag may appear in only one of `clear`, `set` and
+/// `unknown` (and tag 65 not with `version`), so the order never decides a
+/// conflict. `"time_scale"` (`"utc"` or `"misp"`) gives the scale of RFC
+/// 3339 strings for the time items in `set`. An empty object is no
+/// command. [`control_schema`] is the JSON Schema.
+///
+/// ```json
+/// {"set": {"SensorLatitude": 38.8, "SlantRange": null}}
+/// {"clear": ["MissionId", "13"], "unknown": ["SlantRange"], "emit": true}
+/// {"clear_all": true}
+/// {"version": 19}
+/// ```
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum Command {
+    /// Stop reporting every item and drop the version override
+    /// ([`MetadataState::clear_all`]).
+    ClearAll,
+    /// Stop reporting these items ([`MetadataState::clear`]).
+    Clear(Vec<st0601::Tag>),
+    /// Set these items ([`MetadataState::set`]); `Input::Value(Value::Unknown)`
+    /// (JSON `null`) marks one unknown.
+    Set(Vec<(st0601::Tag, Input)>),
+    /// Mark these items unknown ([`MetadataState::unknown`]).
+    Unknown(Vec<st0601::Tag>),
+    /// Override tag 65, or with `None` return to the default
+    /// ([`MetadataState::set_version`]).
+    Version(Option<u8>),
+    /// Send a packet now. Not a change to the state: [`apply_commands`]
+    /// reports it in [`Applied::emit`] for the caller to act on.
+    Emit,
+}
+
+/// What [`apply_commands`] did.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Applied {
+    /// A packet was asked for now ([`Command::Emit`]).
+    pub emit: bool,
+    /// The state changed (its [`MetadataState::revision`] moved).
+    pub changed: bool,
+}
+
+/// Read one control command line into its commands, in the order they
+/// apply (see [`Command`]). Errors name the key at fault. `table` converts
+/// UTC time strings in `set`.
+pub fn parse_commands(line: &str, table: &LeapSeconds) -> Result<Vec<Command>, JsonError> {
+    let json: Json = serde_json::from_str(line).map_err(|e| JsonError::new(format!("not JSON: {e}")))?;
+    let obj = json.as_object().ok_or_else(|| JsonError::new("a command is a JSON object"))?;
+    for key in obj.keys() {
+        if !matches!(key.as_str(), "set" | "clear" | "clear_all" | "unknown" | "version" | "emit" | "time_scale") {
+            return Err(JsonError::new(format!("unknown command key {key:?}")));
+        }
+    }
+    let flag = |key: &str| match obj.get(key) {
+        None => Ok(false),
+        Some(Json::Bool(b)) => Ok(*b),
+        Some(_) => Err(JsonError::new(format!("{key} is true or false"))),
+    };
+    let scale = match obj.get("time_scale") {
+        None => None,
+        Some(Json::String(s)) if s == "utc" => Some(Scale::Utc),
+        Some(Json::String(s)) if s == "misp" => Some(Scale::Misp),
+        Some(_) => return Err(JsonError::new("time_scale must be \"utc\" or \"misp\"")),
+    };
+    let tags = |key: &str| -> Result<Vec<st0601::Tag>, JsonError> {
+        let Some(v) = obj.get(key) else { return Ok(Vec::new()) };
+        let list = v.as_array().ok_or_else(|| JsonError::new(format!("{key} is an array of tags")))?;
+        let mut out = Vec::with_capacity(list.len());
+        for entry in list {
+            let name = match entry {
+                Json::String(s) => s.clone(),
+                Json::Number(n) => n.to_string(),
+                _ => return Err(JsonError::new(format!("{key}: a tag is a number or a name"))),
+            };
+            let tag = st0601_tag(&name).map_err(|e| JsonError::new(format!("{key}: {e}")))?;
+            if matches!(tag, st0601::Tag::Checksum | st0601::Tag::PrecisionTimeStamp) {
+                return Err(JsonError::new(format!("{key}: {name}: tags 1 and 2 are written by the encoder")));
+            }
+            out.push(tag);
+        }
+        Ok(out)
+    };
+    let clear = tags("clear")?;
+    let unknown = tags("unknown")?;
+    let mut set = Vec::new();
+    if let Some(v) = obj.get("set") {
+        let map = v.as_object().ok_or_else(|| JsonError::new("set is an object of items"))?;
+        for (key, value) in map {
+            let tag = st0601_tag(key).map_err(|e| JsonError::new(format!("set: {e}")))?;
+            if matches!(tag, st0601::Tag::Checksum | st0601::Tag::PrecisionTimeStamp) {
+                return Err(JsonError::new(format!("set: {key}: tags 1 and 2 are written by the encoder")));
+            }
+            let input = item_input(tag, value, scale, table).map_err(|e| JsonError::new(format!("set: {key}: {e}")))?;
+            set.push((tag, input));
+        }
+    }
+    let version = match obj.get("version") {
+        None => None,
+        Some(Json::Null) => Some(None),
+        Some(v) => Some(Some(
+            v.as_u64()
+                .and_then(|v| u8::try_from(v).ok())
+                .ok_or_else(|| JsonError::new("version is 0 to 255, or null for the default"))?,
+        )),
+    };
+    // A tag in two lists would be decided by the order alone: refuse it.
+    let mut lists: Vec<(&str, st0601::Tag)> = Vec::new();
+    lists.extend(clear.iter().map(|&t| ("clear", t)));
+    lists.extend(set.iter().map(|&(t, _)| ("set", t)));
+    lists.extend(unknown.iter().map(|&t| ("unknown", t)));
+    if version.is_some() {
+        lists.push(("version", st0601::Tag::UasDatalinkLsVersionNumber));
+    }
+    for (i, &(a, tag)) in lists.iter().enumerate() {
+        if let Some(&(b, _)) = lists[i + 1..].iter().find(|&&(_, t)| t == tag) {
+            let what = if a == b { format!("twice in {a}") } else { format!("in both {a} and {b}") };
+            return Err(JsonError::new(format!("tag {} ({}) is {what}", tag as u64, tag.name())));
+        }
+    }
+    let mut out = Vec::new();
+    if flag("clear_all")? {
+        out.push(Command::ClearAll);
+    }
+    if !clear.is_empty() {
+        out.push(Command::Clear(clear));
+    }
+    if !set.is_empty() {
+        out.push(Command::Set(set));
+    }
+    if !unknown.is_empty() {
+        out.push(Command::Unknown(unknown));
+    }
+    if let Some(v) = version {
+        out.push(Command::Version(v));
+    }
+    if flag("emit")? {
+        out.push(Command::Emit);
+    }
+    Ok(out)
+}
+
+/// Apply commands to `state` in order, as one change: every value is
+/// checked as [`MetadataState::set`] checks it, and if any command fails
+/// the state is left as it was (so a snapshot never sees half of a command
+/// line). Values are set at MISP time `at` (usually now). The error names
+/// the item at fault.
+pub fn apply_commands(commands: &[Command], state: &mut MetadataState, at: MispTime) -> Result<Applied, JsonError> {
+    let before = state.revision();
+    let mut next = state.clone();
+    let mut emit = false;
+    for c in commands {
+        match c {
+            Command::ClearAll => next.clear_all(),
+            Command::Clear(tags) => {
+                for &tag in tags {
+                    next.clear(tag);
+                }
+            }
+            Command::Set(items) => {
+                for (tag, input) in items {
+                    next.set(*tag, input.clone(), at)?;
+                }
+            }
+            Command::Unknown(tags) => {
+                for &tag in tags {
+                    next.unknown(tag, at)?;
+                }
+            }
+            Command::Version(v) => {
+                next.set_version(*v);
+            }
+            Command::Emit => emit = true,
+        }
+    }
+    *state = next;
+    Ok(Applied { emit, changed: state.revision() != before })
+}
+
+/// [`parse_commands`] then [`apply_commands`]: one control line applied to
+/// `state` at MISP time `at`.
+pub fn apply_line(line: &str, state: &mut MetadataState, at: MispTime, table: &LeapSeconds) -> Result<Applied, JsonError> {
+    apply_commands(&parse_commands(line, table)?, state, at)
+}
+
 // ------------------------------------------------------- the decoder's JSON
 
 /// The packet of a decoder JSON line, or `None` for another shape.
@@ -593,13 +825,7 @@ static FIELD_NAMES: &[&str] = &[
 /// the ST 0601 tag table.
 #[must_use]
 pub fn schema() -> Json {
-    let mut items = Map::new();
-    for tag in (3..=143).filter_map(st0601::Tag::from_u64) {
-        if matches!(tag, st0601::Tag::Deprecated | st0601::Tag::MetadataSubstreamIdPack) {
-            continue;
-        }
-        items.insert(format!("{tag:?}"), st0601::encode::tag_schema(tag));
-    }
+    let items = item_schemas();
     serde_json::json!({
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "title": "MISB ST 0601 authoring record (misb NDJSON, one record per line)",
@@ -622,6 +848,50 @@ pub fn schema() -> Json {
             }
         },
         "oneOf": [{"required": ["time", "time_scale"]}, {"required": ["time_us"]}]
+    })
+}
+
+/// The schema of each item value, keyed by `Tag` variant name.
+fn item_schemas() -> Map<String, Json> {
+    let mut items = Map::new();
+    for tag in (3..=143).filter_map(st0601::Tag::from_u64) {
+        if matches!(tag, st0601::Tag::Deprecated | st0601::Tag::MetadataSubstreamIdPack) {
+            continue;
+        }
+        items.insert(format!("{tag:?}"), st0601::encode::tag_schema(tag));
+    }
+    items
+}
+
+/// The JSON Schema (draft 2020-12) of a live control command line (see
+/// [`Command`]), generated from the ST 0601 tag table like [`schema`].
+#[must_use]
+pub fn control_schema() -> Json {
+    let tag_list = serde_json::json!({
+        "type": "array",
+        "items": {"oneOf": [{"type": "string"}, {"type": "integer", "minimum": 3, "maximum": 143}]},
+        "description": "Tags: the Tag variant name, the tag number or the standard's name."
+    });
+    serde_json::json!({
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "MISB ST 0601 live control command (misb NDJSON, one command per line)",
+        "description": "Applied in this order: clear_all, clear, set, unknown, version, emit. A tag may appear in only one of clear, set and unknown.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "clear_all": {"type": "boolean", "description": "stop reporting every item and drop the version override"},
+            "clear": tag_list.clone(),
+            "set": {
+                "type": "object",
+                "description": "Items as in an authoring record. null = unknown.",
+                "properties": item_schemas(),
+                "patternProperties": {"^[0-9]+$": {}}
+            },
+            "unknown": tag_list,
+            "version": {"oneOf": [{"type": "integer", "minimum": 0, "maximum": 255}, {"type": "null"}], "description": "tag 65 override; null for the default (19)"},
+            "emit": {"type": "boolean", "description": "send a packet now"},
+            "time_scale": {"enum": ["utc", "misp"], "description": "scale of RFC 3339 strings for the time items in set"}
+        }
     })
 }
 

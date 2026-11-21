@@ -2,10 +2,11 @@
 
 use super::schedule::{Carriage, Flow, FrameTime, ScheduleConfig, ScheduleError, ScheduleStats, ScheduledUnit, Scheduler};
 use super::source::Sample;
+use super::video::{frame_timestamp, TimestampWriter, VideoTimestampOptions, VideoTimestampStats, VideoTimestamps};
 use super::Anchor;
 use mpegts::mux::{
     Frame, InjectConfig, InjectError, InjectEvent, InjectStats, Injector, InsertUnit, KlvCarriage, Packet, PacketSink,
-    Units,
+    Units, VideoSei,
 };
 use std::fmt;
 
@@ -26,6 +27,12 @@ pub struct FileMuxConfig {
     pub inject: InjectConfig,
     /// When the samples go in.
     pub schedule: ScheduleConfig,
+    /// Writing MISB ST 0604 timestamps into the video (MUXING_PLAN.md
+    /// section 6.8): each access unit's MISP time is the anchor applied to
+    /// its PTS. Default off. Turning it on (or
+    /// [`ScheduleConfig::video_anchor`]) sets the injector's
+    /// [`video_sei`](InjectConfig::video_sei) mode.
+    pub video_timestamps: VideoTimestampOptions,
 }
 
 impl FileMuxConfig {
@@ -42,7 +49,7 @@ impl FileMuxConfig {
         let inject = InjectConfig::default().with_carriage(klv);
         let mut schedule = ScheduleConfig::new(carriage);
         schedule.min_lead_ms = inject.min_lead_ms;
-        FileMuxConfig { inject, schedule }
+        FileMuxConfig { inject, schedule, video_timestamps: VideoTimestampOptions::default() }
     }
 
     /// Check that the two halves agree.
@@ -112,6 +119,8 @@ pub struct FileMuxStats {
     pub inject: InjectStats,
     /// The scheduler's.
     pub schedule: ScheduleStats,
+    /// ST 0604 timestamps found in and written to the video.
+    pub video: VideoTimestampStats,
 }
 
 /// Injects a metadata source into a transport stream: the
@@ -148,8 +157,17 @@ pub struct FileMuxStats {
 pub struct FileMux<S: Iterator<Item = Sample>> {
     inj: Injector,
     sched: Scheduler<S>,
+    video: Video,
     failed: Option<FileMuxError>,
     since_tick: u32,
+}
+
+/// The video timestamp side of the frame callback.
+#[derive(Debug)]
+struct Video {
+    writer: TimestampWriter,
+    /// The injector reads the video's SEI user data.
+    scanning: bool,
 }
 
 impl<S: Iterator<Item = Sample>> fmt::Debug for FileMux<S> {
@@ -169,6 +187,7 @@ fn to_unit(u: ScheduledUnit) -> InsertUnit {
 /// due before it.
 fn on_frame<S: Iterator<Item = Sample>>(
     sched: &mut Scheduler<S>,
+    video: &mut Video,
     failed: &mut Option<FileMuxError>,
     frame: &Frame,
     units: &mut Units<'_>,
@@ -178,8 +197,18 @@ fn on_frame<S: Iterator<Item = Sample>>(
     }
     let time = FrameTime { pts: frame.pts, dts: frame.dts, discontinuity: frame.discontinuity };
     let clock = frame.clock.or_else(|| units.clock());
-    if let Err(e) = sched.frame(&time, clock, &mut |u| units.insert(to_unit(u))) {
+    let found = if video.scanning { frame_timestamp(units) } else { None };
+    video.writer.saw(found.as_ref());
+    if let Err(e) = sched.frame_with_video(&time, found.as_ref(), clock, &mut |u| units.insert(to_unit(u))) {
         *failed = Some(e.into());
+        return;
+    }
+    if video.writer.enabled() {
+        let misp = sched.frame_time(&time);
+        let jump = sched.take_jump();
+        if let Err(e) = video.writer.write(units, found.as_ref(), misp, jump) {
+            *failed = Some(e.into());
+        }
     }
 }
 
@@ -187,9 +216,17 @@ impl<S: Iterator<Item = Sample>> FileMux<S> {
     /// A muxer reading `source`.
     pub fn new(cfg: FileMuxConfig, source: S) -> Result<Self, FileMuxError> {
         cfg.validate()?;
+        let mut inject = cfg.inject;
+        if cfg.video_timestamps.mode != VideoTimestamps::Off {
+            inject = inject.with_video_sei(VideoSei::Write);
+        } else if cfg.schedule.video_anchor && inject.video_sei == VideoSei::Off {
+            inject = inject.with_video_sei(VideoSei::Scan);
+        }
+        let video = Video { writer: TimestampWriter::new(cfg.video_timestamps), scanning: inject.video_sei != VideoSei::Off };
         Ok(FileMux {
-            inj: Injector::new(cfg.inject)?,
+            inj: Injector::new(inject)?,
             sched: Scheduler::new(cfg.schedule, source).map_err(FileMuxError::Schedule)?,
+            video,
             failed: None,
             since_tick: 0,
         })
@@ -222,8 +259,10 @@ impl<S: Iterator<Item = Sample>> FileMux<S> {
     pub fn push<P: PacketSink + ?Sized>(&mut self, data: &[u8], sink: &mut P) -> Result<(), FileMuxError> {
         self.usable()?;
         for piece in data.chunks(PIECE) {
-            let (sched, failed) = (&mut self.sched, &mut self.failed);
-            let r = self.inj.push_with(piece, sink, &mut |f: &Frame, u: &mut Units<'_>| on_frame(sched, failed, f, u));
+            let (sched, video, failed) = (&mut self.sched, &mut self.video, &mut self.failed);
+            let r = self
+                .inj
+                .push_with(piece, sink, &mut |f: &Frame, u: &mut Units<'_>| on_frame(sched, video, failed, f, u));
             self.outcome(r.map_err(FileMuxError::from))?;
             self.tick()?;
         }
@@ -242,9 +281,9 @@ impl<S: Iterator<Item = Sample>> FileMux<S> {
         sink: &mut P,
     ) -> Result<(), FileMuxError> {
         self.usable()?;
-        let (sched, failed) = (&mut self.sched, &mut self.failed);
+        let (sched, video, failed) = (&mut self.sched, &mut self.video, &mut self.failed);
         let r = self.inj.push_packet_with(packet, clock, sink, &mut |f: &Frame, u: &mut Units<'_>| {
-            on_frame(sched, failed, f, u);
+            on_frame(sched, video, failed, f, u);
         });
         self.outcome(r.map_err(FileMuxError::from))?;
         self.since_tick += 1;
@@ -259,8 +298,10 @@ impl<S: Iterator<Item = Sample>> FileMux<S> {
     /// return the counters.
     pub fn finish<P: PacketSink + ?Sized>(&mut self, sink: &mut P) -> Result<FileMuxStats, FileMuxError> {
         self.usable()?;
-        let (sched, failed) = (&mut self.sched, &mut self.failed);
-        let r = self.inj.end_input_with(sink, &mut |f: &Frame, u: &mut Units<'_>| on_frame(sched, failed, f, u));
+        let (sched, video, failed) = (&mut self.sched, &mut self.video, &mut self.failed);
+        let r = self
+            .inj
+            .end_input_with(sink, &mut |f: &Frame, u: &mut Units<'_>| on_frame(sched, video, failed, f, u));
         self.outcome(r.map_err(FileMuxError::from))?;
         let clock = self.inj.clock();
         let inj = &mut self.inj;
@@ -274,7 +315,7 @@ impl<S: Iterator<Item = Sample>> FileMux<S> {
     /// The counters so far.
     #[must_use]
     pub fn stats(&self) -> FileMuxStats {
-        FileMuxStats { inject: self.inj.stats(), schedule: self.sched.stats() }
+        FileMuxStats { inject: self.inj.stats(), schedule: self.sched.stats(), video: self.video.writer.stats }
     }
 
     /// The anchor, once the first video frame set it.

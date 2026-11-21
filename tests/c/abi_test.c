@@ -24,6 +24,7 @@ static void layout(void) {
     S(misb_encode_error)
     S(misb_security)
     S(misb_utc)
+    S(misb_st0604)
     F(misb_config, struct_size)
     F(misb_config, verify_checksum)
     F(misb_config, reject_bad_checksum)
@@ -131,6 +132,12 @@ static void layout(void) {
     F(misb_utc, minute)
     F(misb_utc, second)
     F(misb_utc, micros)
+    F(misb_st0604, struct_size)
+    F(misb_st0604, identifier)
+    F(misb_st0604, status)
+    F(misb_st0604, warnings)
+    F(misb_st0604, value)
+    F(misb_st0604, misp_us)
 }
 
 static misb_status check(const char *what, misb_status status) {
@@ -280,6 +287,62 @@ static void encoder(void) {
     printf("ENC POSIX %llu\n", (unsigned long long)misp);
     printf("ENC VALID_UNTIL %lld\n", (long long)misb_leap_seconds_valid_until());
     printf("ENC STATUS %s|%s\n", misb_status_string(MISB_ERR_ENCODE), misb_status_string(MISB_ERR_TOO_SMALL));
+}
+
+static void t0604_hex(const char *label, const uint8_t *b, size_t n) {
+    size_t i;
+    printf("T0604 %s ", label);
+    for (i = 0; i < n; i++) {
+        printf("%02X", b[i]);
+    }
+    printf("\n");
+}
+
+/* ST 0604 timestamps: decoding the H.264 message of st1402-time.md section
+ * 3.9, encoding it as H.265 nanoseconds, tolerated damage and refusals. */
+static void st0604(void) {
+    static const uint8_t h264[28] = {0x4D, 0x49, 0x53, 0x50, 0x6D, 0x69, 0x63, 0x72, 0x6F, 0x73,
+                                     0x65, 0x63, 0x74, 0x69, 0x6D, 0x65, 0x9F, 0x00, 0x05, 0xFF,
+                                     0xE3, 0x97, 0xFF, 0xF8, 0x7C, 0xFF, 0x11, 0x6A};
+    misb_st0604 ts, back;
+    uint8_t buf[40], damaged[28];
+    size_t len = 0;
+
+    memset(&ts, 0, sizeof ts);
+    ts.struct_size = sizeof ts;
+    enc_check("st0604_decode", misb_st0604_decode(h264, sizeof h264, &ts));
+    printf("T0604 DECODE id=%u status=%02X warnings=%u value=%llu misp=%llu\n", ts.identifier, ts.status, ts.warnings,
+           (unsigned long long)ts.value, (unsigned long long)ts.misp_us);
+
+    ts.identifier = MISB_ST0604_ID_HEVC_NANOSEC;
+    ts.status = MISB_ST0604_STATUS_LOCKED;
+    ts.value = ts.misp_us * 1000;
+    expect(misb_st0604_encode(&ts, NULL, 0, &len) == MISB_ERR_TOO_SMALL && len == 28, "an ST 0604 size query");
+    enc_check("st0604_encode", misb_st0604_encode(&ts, buf, sizeof buf, &len));
+    t0604_hex("NANO", buf, len);
+    memset(&back, 0, sizeof back);
+    back.struct_size = sizeof back;
+    enc_check("st0604_decode nano", misb_st0604_decode(buf, len, &back));
+    enc_check("st0604_encode_payload", misb_st0604_encode_payload(&ts, buf, sizeof buf, &len));
+    expect(len == 12, "a 12-byte payload");
+    t0604_hex("PAYLOAD", buf, len);
+
+    memcpy(damaged, h264, sizeof damaged);
+    damaged[16] = 0x80;
+    damaged[19] = 0x00;
+    ts.struct_size = sizeof ts;
+    enc_check("st0604_decode damaged", misb_st0604_decode(damaged, sizeof damaged, &ts));
+    printf("T0604 TOLERATED status=%02X warnings=%u value=%llu\n", ts.status, ts.warnings, (unsigned long long)ts.value);
+    printf("T0604 HEVC_NANO misp=%llu\n", (unsigned long long)back.misp_us);
+
+    expect(misb_st0604_decode(h264 + 1, 27, &ts) == MISB_EMPTY, "not an ST 0604 identifier");
+    expect(misb_st0604_decode(h264, 27, &ts) == MISB_ERR_PARSE, "an ST 0604 message cut short");
+    expect(misb_st0604_decode(h264, 28, NULL) == MISB_ERR_NULL, "a NULL ST 0604 output");
+    ts.status = 0x80;
+    expect(misb_st0604_encode(&ts, buf, sizeof buf, &len) == MISB_ERR_INVALID, "an invalid Time Status");
+    ts.status = MISB_ST0604_STATUS_LOCK_UNKNOWN;
+    ts.identifier = 9;
+    expect(misb_st0604_encode_payload(&ts, buf, sizeof buf, &len) == MISB_ERR_INVALID, "an unknown identifier");
 }
 
 static void hex(const uint8_t *p, uint64_t n) {
@@ -520,6 +583,7 @@ int main(int argc, char **argv) {
     expect(misb_decoder_push(NULL, NULL, 0) == MISB_ERR_NULL, "NULL decoder");
     printf("STATUS %s|%s\n", misb_status_string(MISB_ERR_PARSE), misb_status_string(42));
     encoder();
+    st0604();
     printf("DONE\n");
     return 0;
 }

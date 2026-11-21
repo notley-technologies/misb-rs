@@ -90,6 +90,7 @@ Only ST 0601 packets are decoded at top level. Packets with any other universal 
 | MISB ST 1010 SDCC-FLP | ST 1010.3 | ST 0601 tag 102 | `Value::Struct` of standard deviations and correlation coefficients; `st1010::decode` decodes one pack |
 | MISB ST 1201 IMAPB | ST 1201.5 | every IMAPB item | `Value::Float`, including the special values; the `imapb` module maps both ways |
 | MISB ST 0603 time | ST 0603.5 | ST 0601 tags 2, 72, 131, and time items of the nested sets | `Value::Time` |
+| MISB ST 0604 timestamps in video | ST 0604.6 | H.264/H.265 user_data_unregistered SEI, MPEG-2 user_data (the payload, found by a video parser) | `st0604::decode`: identifier, ST 0603 Time Status and time; written with `encode` |
 | MISB ST 0107 | | every set | zero-length items as `Value::Unknown`, unknown tags kept as raw bytes |
 | ISO/IEC 13818-1 section 2.12.4 metadata AU cells | | sync KLV (MISB ST 1402) | `au_cells` |
 
@@ -176,6 +177,73 @@ The rules come from the phase 0 documents in [docs/standards](docs/standards/); 
 
 ST 0601 tag 2 is MISP time (MISB ST 0603.5): TAI - 8.000082 s, 28.999918 s ahead of UTC since 2017, not POSIX time. `MispTime` converts from and to UTC with a leap second table (`LeapSeconds::builtin()`, valid before 2027-07-01 per IERS Bulletin C 72, or `LeapSeconds::from_list` for a newer one), handles 23:59:60, and covers 1970 to 1972 with the Handbook's rate formula. `MispTime::from_posix_assuming_no_offset` exists for systems that must match encoders writing POSIX time, so that choice is explicit. `LeapSeconds::st0601_leap_seconds` gives the tag 136 value (29).
 
+## ST 0604 timestamps in video
+
+MISB ST 0604.6 puts the MISP time of each frame into the video itself, so frames and ST 0601 packets share one clock. `misb::st0604` reads and writes its 28 bytes: a 16-byte identifier (`"MISPmicrosectime"` for H.262/MPEG-2 and H.264, or one of two H.265 UUIDs, microseconds or nanoseconds), the ST 0603 Time Status byte, and the 8-byte time with `FF` after every two bytes. In H.264 and H.265 they are a user_data_unregistered SEI message; in MPEG-2, the bytes after a user_data start code. Finding them in a bitstream is the video parser's job (the `mpegts` crate's); this crate handles the payload:
+
+```rust
+use misb::st0604::{self, Identifier, TimeStatus};
+
+// The H.264 message for the Motion Imagery Handbook's reference time.
+let sei = [
+    0x4D, 0x49, 0x53, 0x50, 0x6D, 0x69, 0x63, 0x72, 0x6F, 0x73, 0x65, 0x63, 0x74, 0x69, 0x6D, 0x65,
+    0x9F, 0x00, 0x05, 0xFF, 0xE3, 0x97, 0xFF, 0xF8, 0x7C, 0xFF, 0x11, 0x6A,
+];
+let d = st0604::decode(&sei).unwrap();
+assert_eq!(d.timestamp.identifier, Identifier::MispMicrosectime);
+assert_eq!(d.timestamp.status, TimeStatus::LOCK_UNKNOWN);
+assert_eq!(d.timestamp.misp_time().as_micros(), 1_657_616_732_000_618);
+
+#[cfg(feature = "encode")]
+fn write(t: misb::MispTime) -> Result<[u8; 28], misb::st0604::St0604Error> {
+    // Lock unknown (9F) is the default for times computed from an anchor.
+    let ts = st0604::Timestamp::from_misp(Identifier::HevcNanoseconds, TimeStatus::default(), t).unwrap();
+    ts.to_bytes() // or payload() for the 12 bytes after the identifier
+}
+```
+
+- **Reading** (every build) accepts any of the three identifiers whatever the codec, and tolerates separator bytes that are not `FF`, Time Status bytes with unexpected bits and longer payloads, reporting each in `Decoded::warnings` (DECISIONS D-14). Nanoseconds convert to MISP microseconds rounded half up, `(ns + 500) / 1000` (D-11).
+- **Writing** (feature `encode`) gives the 28 bytes or the 12-byte user_data_payload_byte for each identifier, and only writes the six valid Time Status values (`TimeStatus::LOCKED`, `LOCK_UNKNOWN` and the forward and backward jumps). The `FF` bytes are ST 0604's own; an SEI NAL unit still needs H.264/H.265 emulation prevention.
+
+## Live state and tracks
+
+With `encode`, two sources of metadata as a function of time sit between the values and the packets (MUXING_PLAN.md section 6.3). Both produce a `misb::state::Snapshot`: an immutable, cheaply cloned set of values at one MISP time that encodes to exactly one packet, so a packet never mixes values from two updates.
+
+```rust
+#[cfg(feature = "encode")]
+fn live_and_track(t0: misb::MispTime, t1: misb::MispTime, t: misb::MispTime) -> Result<(), Box<dyn std::error::Error>> {
+    use misb::encode::EncodeOptions;
+    use misb::state::{MetadataState, Staleness};
+    use misb::st0601::Tag;
+    use misb::track::{Keyframe, Track, TrackConfig};
+    use std::time::Duration;
+
+    // Live: current values, each checked when set and stamped with its time.
+    let mut state = MetadataState::new();
+    *state.staleness_mut() = Staleness::with_max_age(Duration::from_secs(3)); // a dead feed goes quiet
+    state.set(Tag::SensorLatitude, 38.8895, t0)?.unknown(Tag::SlantRange, t0)?;
+    let revision = state.revision();                    // compare later: did anything change?
+    let packet = state.snapshot(t).encode_at(t, &EncodeOptions::default())?;
+
+    // Files: sparse keyframes, sampled at any time.
+    let mut track = Track::new(TrackConfig::new());
+    track.push(Keyframe::new(t0).set(Tag::PlatformHeadingAngle, 350.0).set(Tag::SensorLatitude, 38.0).set(Tag::SensorLongitude, -77.0))?;
+    track.push(Keyframe::new(t1).set(Tag::PlatformHeadingAngle, 10.0).set(Tag::SensorLatitude, 38.1).set(Tag::SensorLongitude, -77.1))?;
+    if track.ready(t) {
+        let snapshot = track.sample(t)?;                // heading through north, position on the great circle
+        let packet = snapshot.encode_at(t, &EncodeOptions::default())?;
+        track.prune(t);                                 // keep memory bounded when streaming
+    }
+    Ok(())
+}
+```
+
+- **`MetadataState`** holds one value per tag: `set`, `unknown` (a zero-length item), `clear`, `clear_all`, `set_version` (tag 65), `set_security` (tag 48) and `set_vmti` (tag 74, or any encoded or decoded nested set through `set`). A value the encoder would refuse is refused at once and leaves the state unchanged. `Staleness` gives a maximum age (common, and per tag; `None` is never stale) after which a snapshot leaves the value out or writes it as unknown. `revision()` counts changes and `next_expiry()` says when a value next goes stale, for on-change rates.
+- **`Snapshot`** encodes with `encode_at(time, &options)` (tag 2 = `time`), `to_builder` or `fill` into a reused builder, and hands its items to other code with `items()` or `to_items()`. It is `Send` and `Sync`.
+- **`Track`** interpolates each item between the keyframes that carry it: `Hold` for text, codes, counts, times, sets and packs; `Linear` for continuous numbers; `Angle` the shorter way around for angles whose range is 0 to 360 (wrapping at 360) or -180 to 180 (wrapping at +/-180); `Geodesic` along the great circle for the latitude and longitude pairs (sensor, frame centre, target, alternate platform, the four full corners). Defaults come from the tag table (`default_interpolation`); `TrackConfig::set_interpolation` and per-keyframe hints override them. It never interpolates across an unknown or special value, or across a gap longer than `max_gap`; before an item's first keyframe it leaves it out (or holds the first value), and a held value goes stale like the state's.
+- **Streaming.** `push` keyframes in time order (a keyframe at the same time merges), `ready(t)` says whether what was pushed settles the values at `t`, and `prune(t)` drops what later times no longer need, so with `max_gap` set a long file streams in bounded memory.
+- **Tests** check exact linear midpoints, 350 to 10 degrees through 0, -170 to 170 through +/-180, great-circle midpoints (equator, meridian, antimeridian, 45 N to 54.7356 N) and points against haversine distances, holds, gaps and staleness, streaming against a whole track, and that sampled snapshots decode within the encoder's tolerance (half an LSB for linear maps, one LSB below for IMAPB).
+
 ## JSON
 
 With the `serde` feature, `Packet`, `Item`, `Value`, `Field`, `Checksum`, `Standard`, `Error`, `Stats`, `Received` and `Config` implement `Serialize`, and `Config` also implements `Deserialize`, with missing fields taking their defaults. A packet with tags 2, 5, 13 (zero length), 48 and 1, through `serde_json` (line breaks added):
@@ -211,6 +279,20 @@ The `json` feature reads one packet per line, for people and scripts:
 ```
 
 Keys are tag numbers, `Tag` variant names or the standard's names; values are engineering units; `null` writes "unknown". `time_scale` is required with an RFC 3339 `time`, so UTC and MISP time are never confused (`time_us` is MISP microseconds). Lines of the decoder's own JSON (above) are accepted too, so `decode, edit, encode` round trips. `misb::json::encode_line` encodes a line; `misb::json::schema()` is the JSON Schema, generated from the tag table and committed as [docs/schema/st0601-authoring.schema.json](docs/schema/st0601-authoring.schema.json) (a test keeps it current).
+
+An authoring record's `interpolate` hints (`"hold"`, `"linear"`, `"angle"`, `"geodesic"`) are for tracks: `Record::to_keyframe` (or `Keyframe::from(record)`) turns a line into a track keyframe.
+
+### Live control commands
+
+A live injector's control channel takes one command object per line, applied to a `MetadataState`:
+
+```json
+{"set": {"SensorLatitude": 38.8, "SlantRange": null}}
+{"clear": ["MissionId", "13"], "unknown": ["SlantRange"]}
+{"clear_all": true, "set": {"MissionId": "M2"}, "version": 19, "emit": true}
+```
+
+`set` takes keys and values exactly as an authoring record's `items` (`null` is unknown); `clear` and `unknown` take tag keys; `version` sets tag 65 (`null` for the default); `emit` asks for a packet now. Keys combine in one object and apply in a fixed order (`clear_all`, `clear`, `set`, `unknown`, `version`, `emit`); a tag may appear in only one of `clear`, `set` and `unknown`. `misb::json::parse_commands` reads a line, `apply_commands` applies it to a state as one change (all or nothing) and reports whether a packet was asked for, and `apply_line` does both. Errors name the key at fault. The JSON Schema is `misb::json::control_schema()`, committed as [docs/schema/st0601-control.schema.json](docs/schema/st0601-control.schema.json).
 
 ## Configuration
 
@@ -344,8 +426,36 @@ let stats = mux.finish(&mut out)?;
 - **Timing.** Units are handed to the injector `horizon_ms` ahead of the input's clock and placed in the ISO/IEC 13818-1 window, right before the frame they describe. Late samples are counted, never sent late.
 - **Pacing tools** time the input themselves and use `FileMux::push_packet(packet, clock, sink)`, so each output packet keeps the time of the input packet it came with.
 - **Constant bitrate.** `cfg.inject.with_rate(RateMode::Cbr { .. })` keeps the packet count and every PCR in place by filling null packets, and fails or drops loudly without room.
+- **M2TS.** `cfg.inject.with_record_format(RecordFormat::M2ts)` takes 192-byte M2TS records and writes them: each input record keeps its arrival time stamp, and inserted packets are stamped between their neighbours'.
 
-The C library built with `capi` and `mux` (`make FEATURES=mux`) also exports the mpegts C API, demuxer and injector included, and `make install` puts `mpegts.h` next to `misb.h`, so a C program that demuxes, injects and decodes links one library.
+- **Interpolation.** With a frame rate and `cfg.schedule.interpolate = Some(TrackConfig::new())`, items are sampled through a `misb::track::Track` instead of holding the latest sample: each item moves between the samples that carry it (linear, the short way around for angles, along the great circle for latitude and longitude, held for text and codes), with per-sample hints (`Sample::interpolate`, an NDJSON record's `"interpolate"`) on top. A sparse flight log then gives smooth values at every frame.
+- **ST 0604 timestamps in the video.** `cfg.schedule.video_anchor = true` takes MISP time from the input video's MISB ST 0604 timestamps (H.264, H.265 and MPEG-2 SEI or user data), the best anchor (MUXING_PLAN section 5): a frame's own timestamp is the tag 2 of its metadata, and the anchor moves where the timestamps signal a discontinuity or stray from it. `cfg.video_timestamps = VideoTimestampOptions::new(VideoTimestamps::AddWhenMissing)` (or `Rewrite`) writes one into every H.264 and H.265 access unit with the anchor's time, so video and metadata share one clock; the `mpegts` injector inserts the SEI NAL unit before the first slice and re-packetizes only that video PES (st1402-time.md D-12, D-13).
+
+### Live
+
+`LiveMux` injects into a live stream: each video frame the rate admits gets one packet built from a snapshot of a `misb::state::MetadataState` that the caller changes at any time between pushes, with tag 2 = the frame's MISP time and PTS = the frame's PTS. There are no threads and no clock inside: the caller pushes the input as it arrives with the wall-clock MISP time of its arrival. The injector extrapolates the program clock instead of waiting for the next PCR, so with video timestamps off every input packet is written before `push` returns.
+
+```rust ignore
+use misb::mux::{Carriage, LiveMux, LiveMuxConfig};
+use misb::st0601::Tag;
+
+let mut live = LiveMux::new(LiveMuxConfig::new(Carriage::Sync))?; // every frame up to 30 Hz, wall-clock anchor
+loop {
+    let (bytes, now) = receive();                     // now: MispTime::from_system_time(...)
+    if let Some(fix) = gps.poll() {
+        live.state_mut().set(Tag::SensorLatitude, fix.lat, now)?.set(Tag::SensorLongitude, fix.lon, now)?;
+    }
+    live.push(&bytes, now, &mut out)?;                // a change shows on the next frame
+    send(&out);
+    out.clear();
+}
+```
+
+- **Anchor.** `LiveAnchor::WallClock` (the first frame is at the time it arrived, again after a clock discontinuity), `FirstFrame(time)` or `Pts { pts, misp }`; `video_anchor` puts the video's own ST 0604 timestamps first.
+- **Changes.** `state_mut()` changes values (each checked by the encoder's rules when set); `emit()` sends a packet at the next opportunity whatever the rate; `apply_line` (feature `json`) applies one control line such as `{"set": {"SensorLatitude": 38.8}, "emit": true}`. Staleness (`state_mut().staleness_mut()`) leaves out or marks unknown values older than a maximum age, so a dead sensor feed is not reported forever.
+- **B-frames.** Frames are put back in presentation order for the metadata only; video packets are never held for it.
+
+The C library built with `capi` and `mux` (`make FEATURES=mux`) also exports the mpegts C API, demuxer and injector included, and the live injector of [include/misb_live.h](include/misb_live.h) (`misb_live_new`, `misb_live_push` with the arrival time and an output callback, `misb_live_set_f64` and the other setters, `misb_live_emit`, `misb_live_stats`). `make install` puts `mpegts.h` and `misb_live.h` next to `misb.h`, so a C program that demuxes, injects and decodes links one library.
 
 ## C API
 
@@ -419,6 +529,8 @@ misb_encoder_free(e);
 
 `misb_security_encode` builds the tag 48 set from a `misb_security` struct, `misb_encode_packet` re-encodes a decoded `misb_packet`, and `misb_misp_from_utc`, `misb_misp_from_posix_us` and `misb_misp_to_utc` convert time. Output functions take a buffer and its capacity and return `MISB_ERR_TOO_SMALL` with the size needed in `*len`. An encoder follows the decoder's rules on threads and poisoning.
 
+`misb_st0604_decode` reads the 28 bytes of an ST 0604 timestamp into a `misb_st0604` (identifier, Time Status, value, the value in MISP microseconds and `MISB_ST0604_WARN_*` flags for what it tolerated); it returns `MISB_EMPTY` when the bytes do not start with an ST 0604 identifier. `misb_st0604_encode` and `misb_st0604_encode_payload` write the 28 bytes or the 12 that follow the identifier.
+
 ## Examples
 
 ```bash
@@ -428,6 +540,7 @@ producer | cargo run --release --example klvdump                      # standard
 cargo run --release --features serde --example json -- packets.klv    # JSON Lines, one packet per line
 cargo run --release --features json --example klvencode -- in.ndjson > out.klv   # NDJSON records to packets
 cargo run --release --features json --example klvencode -- --schema   # the authoring JSON Schema
+cargo run --release --features json --example klvencode -- --control-schema   # the live control command JSON Schema
 ```
 
 `klvdump` also takes `--quiet` (counters only); `json` takes `--sync` and `--bytes` (each packet's bytes as received, in hex) and writes the counters to standard error. With `--sync`, both examples read one access unit cell at a time, keep a decoder per service and exit with an error for a truncated cell.

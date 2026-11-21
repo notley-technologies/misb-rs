@@ -155,3 +155,180 @@ fn committed_schema_is_current() {
         assert!(r.is_ok(), "{key}: {:?}", r.err());
     }
 }
+
+// ------------------------------------------------------------ keyframes
+
+#[test]
+fn records_become_track_keyframes() {
+    use misb::track::{Keyframe, Track, TrackConfig};
+    let lines = [
+        r#"{"time_us": 1000000, "version": 18, "items": {"MissionId": "M1", "SlantRange": 1000, "SensorLatitude": 0, "SensorLongitude": 170}, "interpolate": {"SlantRange": "hold"}}"#,
+        r#"{"time_us": 2000000, "items": {"SlantRange": 2000, "SensorLatitude": 0, "SensorLongitude": -170}}"#,
+    ];
+    let records: Vec<_> = lines.iter().map(|l| parse_record(l, LeapSeconds::builtin()).unwrap()).collect();
+    let k = records[0].to_keyframe();
+    assert_eq!(k.time, MispTime::from_micros(1_000_000));
+    assert_eq!(k.version, Some(18));
+    assert_eq!(k.interpolate, [(Tag::SlantRange, Interpolation::Hold)]);
+    assert_eq!(Keyframe::from(records[0].clone()), k);
+    let t = Track::from_keyframes(TrackConfig::new(), records.into_iter().map(Keyframe::from)).unwrap();
+    let s = t.sample(MispTime::from_micros(1_500_000)).unwrap();
+    assert_eq!(s.get(Tag::SlantRange), Some(&Input::Uint(1000)), "the hint holds it");
+    assert_eq!(s.get(Tag::SensorLongitude).and_then(Input::as_f64).map(f64::abs), Some(180.0));
+    assert_eq!(s.version(), Some(18));
+    // A hint that cannot apply is refused when the keyframe is pushed.
+    let bad = parse_record(r#"{"time_us": 1, "items": {"SlantRange": 1}, "interpolate": {"SlantRange": "geodesic"}}"#, LeapSeconds::builtin())
+        .unwrap();
+    let e = Track::from_keyframes(TrackConfig::new(), [bad.into()]).unwrap_err();
+    assert!(e.to_string().contains("tag 21 (Slant Range)"), "{e}");
+}
+
+// ------------------------------------------------------------ control commands
+
+mod control {
+    use misb::encode::Input;
+    use misb::json::{apply_commands, apply_line, control_schema, parse_commands, Command};
+    use misb::state::MetadataState;
+    use misb::st0601::Tag;
+    use misb::{LeapSeconds, MispTime, Value};
+
+    fn parse(line: &str) -> Result<Vec<Command>, misb::json::JsonError> {
+        parse_commands(line, LeapSeconds::builtin())
+    }
+
+    fn t(us: u64) -> MispTime {
+        MispTime::from_micros(1_700_000_000_000_000 + us)
+    }
+
+    #[test]
+    fn each_command() {
+        assert_eq!(
+            parse(r#"{"set": {"SensorLatitude": 38.8, "SlantRange": null, "13": 1}}"#).unwrap_err().message,
+            "tag 13 (Sensor Latitude) is twice in set"
+        );
+        assert_eq!(
+            parse(r#"{"set": {"SensorLatitude": 38.8, "SlantRange": null}}"#).unwrap(),
+            [Command::Set(vec![(Tag::SensorLatitude, Input::Float(38.8)), (Tag::SlantRange, Input::Value(Value::Unknown))])]
+        );
+        assert_eq!(
+            parse(r#"{"clear": ["MissionId", "13", 14, "Slant Range"]}"#).unwrap(),
+            [Command::Clear(vec![Tag::MissionId, Tag::SensorLatitude, Tag::SensorLongitude, Tag::SlantRange])]
+        );
+        assert_eq!(parse(r#"{"clear_all": true}"#).unwrap(), [Command::ClearAll]);
+        assert_eq!(parse(r#"{"clear_all": false}"#).unwrap(), []);
+        assert_eq!(parse(r#"{"unknown": ["SlantRange"]}"#).unwrap(), [Command::Unknown(vec![Tag::SlantRange])]);
+        assert_eq!(parse(r#"{"version": 19}"#).unwrap(), [Command::Version(Some(19))]);
+        assert_eq!(parse(r#"{"version": null}"#).unwrap(), [Command::Version(None)]);
+        assert_eq!(parse(r#"{"emit": true}"#).unwrap(), [Command::Emit]);
+        assert_eq!(parse("{}").unwrap(), []);
+    }
+
+    #[test]
+    fn combinations_come_in_the_documented_order() {
+        let cmds = parse(
+            r#"{"emit": true, "version": 17, "unknown": ["SlantRange"], "set": {"MissionId": "M2"}, "clear": ["13"], "clear_all": true}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            cmds,
+            [
+                Command::ClearAll,
+                Command::Clear(vec![Tag::SensorLatitude]),
+                Command::Set(vec![(Tag::MissionId, Input::Text("M2".into()))]),
+                Command::Unknown(vec![Tag::SlantRange]),
+                Command::Version(Some(17)),
+                Command::Emit,
+            ]
+        );
+    }
+
+    #[test]
+    fn errors_name_the_problem() {
+        for (line, needle) in [
+            ("[1]", "a command is a JSON object"),
+            ("nope", "not JSON"),
+            (r#"{"sett": {}}"#, "unknown command key \"sett\""),
+            (r#"{"set": [1]}"#, "set is an object of items"),
+            (r#"{"set": {"Bogus": 1}}"#, "set: \"Bogus\" is not an ST 0601 tag"),
+            (r#"{"set": {"2": 1}}"#, "set: 2: tags 1 and 2 are written by the encoder"),
+            (r#"{"set": {"MissionId": true}}"#, "set: MissionId: booleans"),
+            (r#"{"set": {"EventStartTime": "2026-01-01T00:00:00Z"}}"#, "time_scale is required"),
+            (r#"{"clear": "MissionId"}"#, "clear is an array of tags"),
+            (r#"{"clear": [true]}"#, "clear: a tag is a number or a name"),
+            (r#"{"clear": ["1"]}"#, "tags 1 and 2"),
+            (r#"{"unknown": ["Nope"]}"#, "unknown: \"Nope\" is not an ST 0601 tag"),
+            (r#"{"clear_all": 1}"#, "clear_all is true or false"),
+            (r#"{"emit": "yes"}"#, "emit is true or false"),
+            (r#"{"version": 256}"#, "version is 0 to 255"),
+            (r#"{"time_scale": "tai"}"#, "time_scale must be"),
+            (r#"{"set": {"SlantRange": 1}, "clear": ["SlantRange"]}"#, "tag 21 (Slant Range) is in both clear and set"),
+            (r#"{"set": {"SlantRange": 1}, "unknown": ["21"]}"#, "is in both set and unknown"),
+            (r#"{"set": {"65": 17}, "version": 18}"#, "tag 65 (UAS Datalink LS Version Number) is in both set and version"),
+        ] {
+            let e = parse(line).unwrap_err();
+            assert!(e.message.contains(needle), "{line}: {e}");
+        }
+        // A time string with its scale is fine.
+        let c = parse(r#"{"time_scale": "misp", "set": {"EventStartTime": "2022-07-12T09:05:32.000618Z"}}"#).unwrap();
+        assert_eq!(c, [Command::Set(vec![(Tag::EventStartTime, Input::Time(MispTime::from_micros(1_657_616_732_000_618)))])]);
+    }
+
+    #[test]
+    fn applying_commands_to_a_state() {
+        let mut s = MetadataState::new();
+        let table = LeapSeconds::builtin();
+        let r = apply_line(r#"{"set": {"MissionId": "M1", "SensorLatitude": 38.8, "SlantRange": null}}"#, &mut s, t(0), table).unwrap();
+        assert_eq!((r.emit, r.changed), (false, true));
+        assert_eq!(s.get(Tag::SlantRange), Some(&Input::Value(Value::Unknown)));
+        assert_eq!(s.set_at(Tag::MissionId), Some(t(0)));
+        let r = apply_line(r#"{"emit": true}"#, &mut s, t(1), table).unwrap();
+        assert_eq!((r.emit, r.changed), (true, false));
+        apply_line(r#"{"clear": ["MissionId"], "unknown": ["13"], "version": 18}"#, &mut s, t(2), table).unwrap();
+        assert!(s.get(Tag::MissionId).is_none());
+        assert_eq!(s.get(Tag::SensorLatitude), Some(&Input::Value(Value::Unknown)));
+        assert_eq!(s.version(), Some(18));
+        apply_line(r#"{"clear_all": true, "set": {"MissionId": "M2"}}"#, &mut s, t(3), table).unwrap();
+        assert_eq!(s.len(), 1);
+        assert_eq!(s.version(), None);
+        assert_eq!(s.get(Tag::MissionId), Some(&Input::Text("M2".into())));
+        let r = apply_line(r#"{"clear": ["SlantRange"]}"#, &mut s, t(4), table).unwrap();
+        assert!(!r.changed, "clearing an item without a value changes nothing");
+    }
+
+    #[test]
+    fn a_failing_line_changes_nothing() {
+        let mut s = MetadataState::new();
+        let table = LeapSeconds::builtin();
+        apply_line(r#"{"set": {"MissionId": "M1", "SensorLatitude": 10}}"#, &mut s, t(0), table).unwrap();
+        let rev = s.revision();
+        // The latitude is out of range; the clear_all and the mission id
+        // before it must not take effect either.
+        let e = apply_line(r#"{"clear_all": true, "set": {"MissionId": "M2", "SensorLatitude": 91}}"#, &mut s, t(1), table)
+            .unwrap_err();
+        assert!(e.message.contains("tag 13 (Sensor Latitude)"), "{e}");
+        assert!(e.encode.is_some());
+        assert_eq!(s.revision(), rev);
+        assert_eq!(s.get(Tag::MissionId), Some(&Input::Text("M1".into())));
+        let e = apply_commands(&[Command::Unknown(vec![Tag::ControlCommand])], &mut s, t(1)).unwrap_err();
+        assert!(e.message.contains("tag 115"), "{e}");
+        assert_eq!(s.revision(), rev);
+    }
+
+    #[test]
+    fn committed_control_schema_is_current() {
+        let generated = serde_json::to_string_pretty(&control_schema()).unwrap() + "\n";
+        let committed = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/docs/schema/st0601-control.schema.json"))
+            .expect("docs/schema/st0601-control.schema.json")
+            .replace("\r\n", "\n");
+        assert!(
+            generated == committed,
+            "regenerate with: cargo run --features json --example klvencode -- --control-schema > docs/schema/st0601-control.schema.json"
+        );
+        // Every documented item key parses in a set command.
+        let schema = control_schema();
+        for key in schema["properties"]["set"]["properties"].as_object().unwrap().keys() {
+            let line = format!(r#"{{"set": {{"{key}": null}}}}"#);
+            assert!(parse(&line).is_ok(), "{key}");
+        }
+    }
+}

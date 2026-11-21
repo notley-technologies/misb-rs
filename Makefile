@@ -8,7 +8,8 @@
 # PREFIX (default /usr/local), LIBDIR, INCLUDEDIR and DESTDIR are honoured,
 # as are CARGO and CARGO_FLAGS (e.g. CARGO_FLAGS=--offline). FEATURES adds
 # Cargo features: FEATURES=mux builds a library that also exports the mpegts
-# C API and installs mpegts.h (from the pinned mpegts) next to misb.h, so a
+# C API and installs mpegts.h (from the pinned mpegts) and misb_live.h (live
+# KLV injection) next to misb.h, so a
 # C program that demuxes, muxes and decodes links only libmisb. On macOS the
 # install path is built into the library, so pass the same PREFIX/LIBDIR
 # to `make` and `make install`.
@@ -96,6 +97,7 @@ install: all
 	install -m 644 $(STATIC_LIB) $(DESTDIR)$(LIBDIR)/libmisb.a
 	install -m 644 include/misb.h $(DESTDIR)$(INCLUDEDIR)/misb.h
 	$(if $(MUX),install -m 644 $(MPEGTS_H) $(DESTDIR)$(INCLUDEDIR)/mpegts.h)
+	$(if $(MUX),install -m 644 include/misb_live.h $(DESTDIR)$(INCLUDEDIR)/misb_live.h)
 	@echo "generating $(DESTDIR)$(LIBDIR)/pkgconfig/misb.pc and $(DESTDIR)$(CMAKE_DIR)/*.cmake"
 	@$(SUBST) c/misb.pc.in > $(DESTDIR)$(LIBDIR)/pkgconfig/misb.pc
 	@$(SUBST) c/misb-config.cmake.in > $(DESTDIR)$(CMAKE_DIR)/misb-config.cmake
@@ -104,7 +106,7 @@ install: all
 uninstall:
 	rm -f $(DESTDIR)$(LIBDIR)/$(SHARED) $(DESTDIR)$(LIBDIR)/$(LINK_NAME) $(DESTDIR)$(LIBDIR)/libmisb.a
 	rm -f $(DESTDIR)$(INCLUDEDIR)/misb.h $(DESTDIR)$(LIBDIR)/pkgconfig/misb.pc
-	$(if $(MUX),rm -f $(DESTDIR)$(INCLUDEDIR)/mpegts.h)
+	$(if $(MUX),rm -f $(DESTDIR)$(INCLUDEDIR)/mpegts.h $(DESTDIR)$(INCLUDEDIR)/misb_live.h)
 	rm -f $(DESTDIR)$(CMAKE_DIR)/misb-config.cmake $(DESTDIR)$(CMAKE_DIR)/misb-config-version.cmake
 	-rmdir $(DESTDIR)$(CMAKE_DIR) 2>/dev/null
 

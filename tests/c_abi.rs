@@ -5,6 +5,7 @@
 //! check holds whatever the standards modules make of each tag.
 
 use misb::capi::*;
+use misb::st0604::TimeStatus;
 use misb::{Checksum, Error, Item, Packet, Standard, Value};
 use std::collections::{BTreeSet, HashMap};
 use std::ffi::CStr;
@@ -331,7 +332,7 @@ fn header_defines() -> HashMap<String, i64> {
 fn header_constants_match_rust() {
     let defs = header_defines();
     let get = |name: &str| *defs.get(name).unwrap_or_else(|| panic!("{name} missing from header"));
-    let groups: [(&str, &[(&str, i64)]); 9] = [
+    let groups: [(&str, &[(&str, i64)]); 12] = [
         (
             "MISB_VALUE_",
             &[
@@ -429,6 +430,34 @@ fn header_constants_match_rust() {
                 ("MISB_ENCODE_ERR_UNSUPPORTED", MISB_ENCODE_ERR_UNSUPPORTED.into()),
             ],
         ),
+        (
+            "MISB_ST0604_ID_",
+            &[
+                ("MISB_ST0604_ID_MICROSEC", MISB_ST0604_ID_MICROSEC.into()),
+                ("MISB_ST0604_ID_HEVC_MICROSEC", MISB_ST0604_ID_HEVC_MICROSEC.into()),
+                ("MISB_ST0604_ID_HEVC_NANOSEC", MISB_ST0604_ID_HEVC_NANOSEC.into()),
+            ],
+        ),
+        (
+            "MISB_ST0604_STATUS_",
+            &[
+                ("MISB_ST0604_STATUS_LOCKED", TimeStatus::LOCKED.byte().into()),
+                ("MISB_ST0604_STATUS_LOCK_UNKNOWN", TimeStatus::LOCK_UNKNOWN.byte().into()),
+                ("MISB_ST0604_STATUS_LOCKED_FORWARD_JUMP", TimeStatus::LOCKED_FORWARD_JUMP.byte().into()),
+                ("MISB_ST0604_STATUS_LOCKED_BACKWARD_JUMP", TimeStatus::LOCKED_BACKWARD_JUMP.byte().into()),
+                ("MISB_ST0604_STATUS_LOCK_UNKNOWN_FORWARD_JUMP", TimeStatus::LOCK_UNKNOWN_FORWARD_JUMP.byte().into()),
+                ("MISB_ST0604_STATUS_LOCK_UNKNOWN_BACKWARD_JUMP", TimeStatus::LOCK_UNKNOWN_BACKWARD_JUMP.byte().into()),
+            ],
+        ),
+        (
+            "MISB_ST0604_WARN_",
+            &[
+                ("MISB_ST0604_WARN_SEPARATOR", MISB_ST0604_WARN_SEPARATOR.into()),
+                ("MISB_ST0604_WARN_RESERVED", MISB_ST0604_WARN_RESERVED.into()),
+                ("MISB_ST0604_WARN_REVERSE", MISB_ST0604_WARN_REVERSE.into()),
+                ("MISB_ST0604_WARN_TRAILING", MISB_ST0604_WARN_TRAILING.into()),
+            ],
+        ),
     ];
     for (prefix, members) in groups {
         for (name, value) in members {
@@ -440,6 +469,12 @@ fn header_constants_match_rust() {
         assert_eq!(codes.len(), members.len(), "{prefix}* codes are distinct");
     }
     for (name, value) in [
+        ("MISB_ST0604_STATUS_LOCKED", i64::from(MISB_ST0604_STATUS_LOCKED)),
+        ("MISB_ST0604_STATUS_LOCK_UNKNOWN", i64::from(MISB_ST0604_STATUS_LOCK_UNKNOWN)),
+        ("MISB_ST0604_STATUS_LOCKED_FORWARD_JUMP", i64::from(MISB_ST0604_STATUS_LOCKED_FORWARD_JUMP)),
+        ("MISB_ST0604_STATUS_LOCKED_BACKWARD_JUMP", i64::from(MISB_ST0604_STATUS_LOCKED_BACKWARD_JUMP)),
+        ("MISB_ST0604_STATUS_LOCK_UNKNOWN_FORWARD_JUMP", i64::from(MISB_ST0604_STATUS_LOCK_UNKNOWN_FORWARD_JUMP)),
+        ("MISB_ST0604_STATUS_LOCK_UNKNOWN_BACKWARD_JUMP", i64::from(MISB_ST0604_STATUS_LOCK_UNKNOWN_BACKWARD_JUMP)),
         ("MISB_ABI_VERSION", i64::from(MISB_ABI_VERSION)),
         ("MISB_OK", MISB_OK.into()),
         ("MISB_EMPTY", MISB_EMPTY.into()),
@@ -499,7 +534,7 @@ fn exported_symbols_match_header() {
         .map(|s| s.trim_start_matches('_').to_string())
         .collect();
     let declared = header_functions();
-    assert_eq!(declared.len(), 52, "header functions: {declared:?}");
+    assert_eq!(declared.len(), 55, "header functions: {declared:?}");
     let missing: Vec<_> = declared.difference(&exported).collect();
     let extra: Vec<_> = exported.difference(&declared).collect();
     assert!(missing.is_empty(), "declared in the header but not exported: {missing:?}");
@@ -575,6 +610,9 @@ fn mux_library_exports_the_mpegts_api() {
         .expect("mpegts in cargo metadata");
     let mpegts_h = Path::new(manifest).parent().unwrap().join("include/mpegts.h");
     let mut declared = header_functions();
+    let live = declared_functions(&root().join("include/misb_live.h"), "misb_");
+    assert_eq!(live.len(), 18, "misb_live.h functions: {live:?}");
+    declared.extend(live);
     let mpegts = declared_functions(&mpegts_h, "mpegts_");
     assert!(mpegts.len() >= 60, "mpegts.h functions: {mpegts:?}");
     declared.extend(mpegts);
@@ -587,6 +625,69 @@ fn mux_library_exports_the_mpegts_api() {
         assert!(missing.is_empty(), "{}: declared but not exported: {missing:?}", lib.display());
         assert!(extra.is_empty(), "{}: exported but not declared: {extra:?}", lib.display());
     }
+}
+
+/// misb_live.h lays its structs out as the library does.
+#[cfg(feature = "mux")]
+#[test]
+fn live_header_layout_matches() {
+    let Some(cc) = compiler() else {
+        eprintln!("skipping: no C compiler");
+        return;
+    };
+    if cfg!(target_env = "msvc") {
+        eprintln!("skipping: the layout program uses cc options");
+        return;
+    }
+    macro_rules! live_fields {
+        ($($t:ident . $f:ident),* $(,)?) => {{
+            let mut c = String::from("#include <stdio.h>\n#include <stddef.h>\n#include \"misb_live.h\"\nint main(void) {\n");
+            let mut rust = Vec::new();
+            for (t, size) in [("misb_live_config", std::mem::size_of::<misb_live_config>()), ("misb_live_counters", std::mem::size_of::<misb_live_counters>())] {
+                c.push_str(&format!("    printf(\"S {t} %zu\\n\", sizeof({t}));\n"));
+                rust.push(format!("S {t} {size}"));
+            }
+            $(
+                c.push_str(&format!("    printf(\"L {0}.{1} %zu\\n\", offsetof({0}, {1}));\n", stringify!($t), stringify!($f)));
+                let v = std::mem::MaybeUninit::<$t>::uninit();
+                let base = v.as_ptr();
+                // SAFETY: only the address is taken, nothing is read.
+                let at = unsafe { std::ptr::addr_of!((*base).$f) } as usize - base as usize;
+                rust.push(format!("L {}.{} {at}", stringify!($t), stringify!($f)));
+            )*
+            c.push_str("    return 0;\n}\n");
+            (c, rust)
+        }};
+    }
+    let (source, rust) = live_fields!(
+        misb_live_config.carriage, misb_live_config.flags, misb_live_config.rate, misb_live_config.rate_value,
+        misb_live_config.anchor, misb_live_config.timestamps, misb_live_config.anchor_pts,
+        misb_live_config.anchor_misp_us, misb_live_config.max_age_us, misb_live_config.program,
+        misb_live_config.existing_klv, misb_live_config.pid, misb_live_config.service_id,
+        misb_live_config.psi_interval_ms, misb_live_counters.packets_in, misb_live_counters.held_packets,
+        misb_live_counters.timestamps_written, misb_live_counters.psi_packets,
+    );
+    let dir = std::env::temp_dir().join(format!("misb-live-layout-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let (src, exe) = (dir.join("layout.c"), dir.join("layout"));
+    std::fs::write(&src, source).unwrap();
+    let mut cmd = Command::new(cc);
+    if cfg!(all(target_arch = "x86", target_os = "linux")) {
+        cmd.arg("-m32");
+    }
+    let status = cmd
+        .args(["-std=c11", "-Wall", "-Wextra", "-Werror", "-I"])
+        .arg(root().join("include"))
+        .arg(&src)
+        .arg("-o")
+        .arg(&exe)
+        .status()
+        .unwrap();
+    assert!(status.success(), "misb_live.h failed to compile");
+    let out = Command::new(&exe).output().unwrap();
+    let c: Vec<String> = String::from_utf8(out.stdout).unwrap().lines().map(String::from).collect();
+    assert_eq!(c, rust);
+    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 // ---------------------------------------------------------------- layout
@@ -618,6 +719,7 @@ fn rust_layout() -> Vec<(String, usize)> {
         size!(misb_encode_error),
         size!(misb_security),
         size!(misb_utc),
+        size!(misb_st0604),
         field!(misb_config, struct_size),
         field!(misb_config, verify_checksum),
         field!(misb_config, reject_bad_checksum),
@@ -725,6 +827,12 @@ fn rust_layout() -> Vec<(String, usize)> {
         field!(misb_utc, minute),
         field!(misb_utc, second),
         field!(misb_utc, micros),
+        field!(misb_st0604, struct_size),
+        field!(misb_st0604, identifier),
+        field!(misb_st0604, status),
+        field!(misb_st0604, warnings),
+        field!(misb_st0604, value),
+        field!(misb_st0604, misp_us),
     ]
 }
 
@@ -848,6 +956,32 @@ fn expected_encoder() -> Vec<String> {
     ]
 }
 
+/// What `st0604()` in tests/c/abi_test.c must print, built with the Rust
+/// API.
+fn expected_st0604() -> Vec<String> {
+    use misb::st0604::{self, Identifier, Timestamp};
+    use misb::MispTime;
+    let hexu = |b: &[u8]| b.iter().map(|x| format!("{x:02X}")).collect::<String>();
+    let time = MispTime::from_micros(1_657_616_732_000_618);
+    let micro = Timestamp::from_misp(Identifier::MispMicrosectime, TimeStatus::LOCK_UNKNOWN, time).unwrap();
+    let nano = Timestamp::from_misp(Identifier::HevcNanoseconds, TimeStatus::LOCKED, time).unwrap();
+    let mut damaged = micro.to_bytes().unwrap();
+    damaged[16] = 0x80;
+    damaged[19] = 0x00;
+    let d = st0604::decode(&damaged).unwrap();
+    vec![
+        format!("T0604 DECODE id={MISB_ST0604_ID_MICROSEC} status=9F warnings=0 value={0} misp={0}", time.as_micros()),
+        format!("T0604 NANO {}", hexu(&nano.to_bytes().unwrap())),
+        format!("T0604 PAYLOAD {}", hexu(&nano.payload().unwrap())),
+        format!(
+            "T0604 TOLERATED status=80 warnings={} value={}",
+            MISB_ST0604_WARN_SEPARATOR | MISB_ST0604_WARN_RESERVED,
+            d.timestamp.value
+        ),
+        format!("T0604 HEVC_NANO misp={}", time.as_micros()),
+    ]
+}
+
 #[test]
 fn c_program_layout_and_behaviour() {
     if cfg!(all(windows, not(target_env = "msvc"))) {
@@ -892,10 +1026,12 @@ fn c_program_layout_and_behaviour() {
     // The encoder, as C drives it, writes what the Rust builder writes.
     let enc: Vec<&str> = stdout.lines().filter(|l| l.starts_with("ENC ")).collect();
     assert_eq!(enc, expected_encoder(), "C encoder output");
+    let st0604: Vec<&str> = stdout.lines().filter(|l| l.starts_with("T0604 ")).collect();
+    assert_eq!(st0604, expected_st0604(), "C ST 0604 output");
 
     // Behaviour: the C view of every packet is the Rust view.
     let lines: Vec<&str> =
-        stdout.lines().filter(|l| !l.starts_with("S ") && !l.starts_with("L ") && !l.starts_with("ENC ")).collect();
+        stdout.lines().filter(|l| !["S ", "L ", "ENC ", "T0604 "].iter().any(|p| l.starts_with(p))).collect();
     let expected = expected_behaviour(&data);
     for (i, (got, want)) in lines.iter().zip(&expected).enumerate() {
         assert_eq!(got, want, "line {i}");

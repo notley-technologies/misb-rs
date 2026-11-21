@@ -182,7 +182,7 @@ fn kind_code(k: ErrorKind) -> u32 {
     }
 }
 
-fn c_error(e: &EncodeError) -> misb_encode_error {
+pub(super) fn c_error(e: &EncodeError) -> misb_encode_error {
     misb_encode_error {
         struct_size: mem::size_of::<misb_encode_error>() as u32,
         standard: standard_code(e.standard),
@@ -252,7 +252,7 @@ unsafe fn options_in(p: *const misb_encode_options) -> Result<EncodeOptions, i32
 }
 
 /// Copy `bytes` into a caller's buffer, or report the size needed.
-unsafe fn copy_out(bytes: &[u8], buf: *mut u8, cap: usize, len: *mut usize) -> misb_status {
+pub(super) unsafe fn copy_out(bytes: &[u8], buf: *mut u8, cap: usize, len: *mut usize) -> misb_status {
     if len.is_null() {
         return MISB_ERR_NULL;
     }

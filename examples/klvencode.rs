@@ -4,9 +4,12 @@
 //!     cargo run --features json --example klvencode -- records.ndjson > out.klv
 //!     cargo run --features json --example json -- in.klv | cargo run --features json --example klvencode > out.klv
 //!     cargo run --features json --example klvencode -- --schema
+//!     cargo run --features json --example klvencode -- --control-schema
 //!
 //! FILE       NDJSON; `-` or nothing reads standard input
 //! --schema   print the JSON Schema of the authoring format and exit
+//! --control-schema
+//!            print the JSON Schema of the live control commands and exit
 //! --clamp    clamp out-of-range values instead of rejecting them
 //!
 //! The format is described in the documentation of `misb::json`. Warnings
@@ -29,11 +32,15 @@ fn main() {
                 println!("{}", serde_json::to_string_pretty(&misb::json::schema()).expect("schema serializes"));
                 return;
             }
+            "--control-schema" => {
+                println!("{}", serde_json::to_string_pretty(&misb::json::control_schema()).expect("schema serializes"));
+                return;
+            }
             "--clamp" => opts.policy = Policy::Clamp,
             "-" => file = None,
             f if !f.starts_with("--") && file.is_none() => file = Some(f.to_string()),
             other => {
-                eprintln!("unknown argument {other}\nusage: klvencode [FILE|-] [--schema] [--clamp]");
+                eprintln!("unknown argument {other}\nusage: klvencode [FILE|-] [--schema|--control-schema] [--clamp]");
                 process::exit(2);
             }
         }

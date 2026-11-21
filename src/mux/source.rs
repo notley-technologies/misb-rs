@@ -2,6 +2,7 @@
 
 use crate::encode::{EncodeError, EncodeOptions, Input, St0601Builder};
 use crate::st0601::Tag;
+use crate::track::{Interpolation, Keyframe};
 use crate::{Checksum, Config, Decoder, Error, MispTime, Value};
 
 /// One metadata sample: a time and what to write at it.
@@ -12,6 +13,12 @@ pub struct Sample {
     pub time: MispTime,
     /// The content.
     pub data: SampleData,
+    /// Interpolation hints for a track ([`ScheduleConfig::interpolate`]):
+    /// how items move from this sample to the next one that carries them.
+    /// Ignored without a track and for recorded packets.
+    ///
+    /// [`ScheduleConfig::interpolate`]: super::ScheduleConfig::interpolate
+    pub interpolate: Vec<(Tag, Interpolation)>,
 }
 
 /// The content of a [`Sample`].
@@ -39,13 +46,35 @@ impl Sample {
     /// A recorded packet, timed by its own tag 2.
     #[must_use]
     pub fn packet(time: MispTime, bytes: Vec<u8>) -> Sample {
-        Sample { time, data: SampleData::Packet(bytes) }
+        Sample { time, data: SampleData::Packet(bytes), interpolate: Vec::new() }
     }
 
     /// Items to encode at `time`.
     #[must_use]
     pub fn items(time: MispTime, items: Vec<(Tag, Input)>) -> Sample {
-        Sample { time, data: SampleData::Items { version: None, items } }
+        Sample { time, data: SampleData::Items { version: None, items }, interpolate: Vec::new() }
+    }
+
+    /// With an interpolation hint for a track.
+    #[must_use]
+    pub fn with_interpolation(mut self, tag: Tag, how: Interpolation) -> Sample {
+        self.interpolate.push((tag, how));
+        self
+    }
+
+    /// The track keyframe of a sample of items (`None` for a recorded
+    /// packet, which cannot be interpolated).
+    #[must_use]
+    pub fn to_keyframe(&self) -> Option<Keyframe> {
+        match &self.data {
+            SampleData::Items { version, items } => Some(Keyframe {
+                time: self.time,
+                version: *version,
+                items: items.clone(),
+                interpolate: self.interpolate.clone(),
+            }),
+            SampleData::Packet(_) => None,
+        }
     }
 
     /// The ST 0601 packet of this sample with tag 2 = `time`: a recorded
@@ -73,10 +102,14 @@ impl Sample {
 
 #[cfg(feature = "json")]
 impl From<crate::json::Record> for Sample {
-    /// An authoring record (one NDJSON line). Its interpolation hints are
-    /// not used yet.
+    /// An authoring record (one NDJSON line), with its interpolation hints
+    /// (used when the scheduler samples a track).
     fn from(r: crate::json::Record) -> Sample {
-        Sample { time: r.time, data: SampleData::Items { version: r.version, items: r.items } }
+        Sample {
+            time: r.time,
+            data: SampleData::Items { version: r.version, items: r.items },
+            interpolate: r.interpolate,
+        }
     }
 }
 

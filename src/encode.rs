@@ -219,6 +219,28 @@ impl From<&Value> for Input {
     }
 }
 
+impl Input {
+    /// The value as a real number when it is a plain number
+    /// ([`Input::Float`], [`Input::Uint`], [`Input::Int`], or the same in a
+    /// [`Value`]); `None` for text, codes, times, special states and sets.
+    #[must_use]
+    pub fn as_f64(&self) -> Option<f64> {
+        match self {
+            Input::Float(x) | Input::Value(Value::Float(x)) => Some(*x),
+            Input::Uint(x) | Input::Value(Value::Uint(x)) => Some(*x as f64),
+            Input::Int(x) | Input::Value(Value::Int(x)) => Some(*x as f64),
+            _ => None,
+        }
+    }
+
+    /// Whether this is `Input::Value(Value::Unknown)`, which writes a
+    /// zero-length item (the value is unknown).
+    #[must_use]
+    pub fn is_unknown(&self) -> bool {
+        matches!(self, Input::Value(Value::Unknown))
+    }
+}
+
 /// What kind of problem stopped encoding.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
@@ -833,6 +855,18 @@ impl St0601Builder {
     /// item's maximum; DECISIONS D-08 lists the defaults).
     pub fn set_imapb(&mut self, tag: st0601::Tag, value: impl Into<Input>, len: usize) -> Result<&mut Self, EncodeError> {
         self.set_input(tag, &value.into(), Some(len))
+    }
+
+    /// [`set`](St0601Builder::set) from a borrowed value (live state
+    /// snapshots and tracks keep their values).
+    pub(crate) fn set_ref(&mut self, tag: st0601::Tag, input: &Input) -> Result<&mut Self, EncodeError> {
+        self.set_input(tag, input, None)
+    }
+
+    /// Whether the version (tag 65) was set as an item since the last
+    /// [`clear`](St0601Builder::clear), and its value.
+    pub(crate) fn version_override(&self) -> Option<u8> {
+        self.version_set.then_some(self.version)
     }
 
     fn set_input(&mut self, tag: st0601::Tag, input: &Input, len: Option<usize>) -> Result<&mut Self, EncodeError> {
