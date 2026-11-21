@@ -139,8 +139,10 @@ fn edited_decoder_json_is_re_encoded_from_the_value() {
 #[test]
 fn committed_schema_is_current() {
     let generated = serde_json::to_string_pretty(&misb::json::schema()).unwrap() + "\n";
+    // A Windows checkout may have turned the line endings into CRLF.
     let committed = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/docs/schema/st0601-authoring.schema.json"))
-        .expect("docs/schema/st0601-authoring.schema.json");
+        .expect("docs/schema/st0601-authoring.schema.json")
+        .replace("\r\n", "\n");
     assert!(
         generated == committed,
         "regenerate with: cargo run --features json --example klvencode -- --schema > docs/schema/st0601-authoring.schema.json"

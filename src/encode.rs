@@ -403,7 +403,7 @@ impl<'a> Ctx<'a> {
     /// A non-negative integer: integers, codes, times, and integral floats.
     pub(crate) fn integer(&self, v: View<'_>) -> Result<u64, EncodeError> {
         match v {
-            View::Uint(x) | View::Code(x, _) | View::Time(x) => Ok(x),
+            View::Uint(x) | View::Code(x) | View::Time(x) => Ok(x),
             View::Int(x) => u64::try_from(x).map_err(|_| self.err(ErrorKind::OutOfRange, "negative value")),
             View::Float(x) if x.is_finite() && x.fract() == 0.0 && (0.0..=u64::MAX as f64).contains(&x) => Ok(x as u64),
             View::Float(x) if !x.is_finite() => Err(self.err(ErrorKind::NotFinite, "NaN and infinity cannot be encoded")),
@@ -415,7 +415,7 @@ impl<'a> Ctx<'a> {
     pub(crate) fn signed_integer(&self, v: View<'_>) -> Result<i64, EncodeError> {
         match v {
             View::Int(x) => Ok(x),
-            View::Uint(x) | View::Code(x, _) => {
+            View::Uint(x) | View::Code(x) => {
                 i64::try_from(x).map_err(|_| self.err(ErrorKind::OutOfRange, "value too large"))
             }
             View::Float(x) if x.is_finite() && x.fract() == 0.0 && (i64::MIN as f64..=i64::MAX as f64).contains(&x) => {
@@ -549,8 +549,8 @@ pub(crate) enum View<'a> {
     Text(&'a str),
     Time(u64),
     Bytes(&'a [u8]),
-    /// A code, with the label it was decoded with.
-    Code(u64, Option<&'static str>),
+    /// A code (an enumeration value).
+    Code(u64),
     OffEarth,
     OutOfRange,
     Below,
@@ -573,7 +573,7 @@ impl<'a> View<'a> {
             Input::Text(s) => View::Text(s),
             Input::Time(t) => View::Time(t.as_micros()),
             Input::Bytes(b) => View::Bytes(b),
-            Input::Code(c) => View::Code(*c, None),
+            Input::Code(c) => View::Code(*c),
             Input::OffEarth => View::OffEarth,
             Input::OutOfRange => View::OutOfRange,
             Input::BelowMinimum => View::Below,
@@ -592,7 +592,7 @@ impl<'a> View<'a> {
             Value::Bytes(b) => View::Bytes(b),
             Value::Time(t) => View::Time(*t),
             Value::Enum { label: Some("N/A (Off-Earth)"), .. } => View::OffEarth,
-            Value::Enum { code, label } => View::Code(*code, *label),
+            Value::Enum { code, .. } => View::Code(*code),
             Value::OutOfRange => View::OutOfRange,
             Value::Unknown => View::Unknown,
             Value::Set(p) => View::Packet(p),

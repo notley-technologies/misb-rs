@@ -421,7 +421,7 @@ fn pack(tag: Tag, v: View<'_>, ctx: &mut Ctx<'_>, out: &mut Vec<u8>) -> Result<(
         Tag::ActiveWavelengthList => {
             let l = list(ctx, v)?;
             // R-ST0601-ENCODE-77: ID 0 is alone.
-            if l.len() > 1 && l.iter().any(|x| matches!(View::value(x), View::Code(0, _) | View::Uint(0))) {
+            if l.len() > 1 && l.iter().any(|x| matches!(View::value(x), View::Code(0) | View::Uint(0))) {
                 return Err(ctx.err(ErrorKind::InvalidCode, "wavelength ID 0 must be the only ID"));
             }
             oid_list(v, ctx, out, |ctx, id| match WAVELENGTHS.label(id) {
