@@ -105,6 +105,9 @@ pub mod json;
 mod error;
 pub mod imapb;
 mod klv;
+#[cfg(feature = "mux")]
+#[cfg_attr(docsrs, doc(cfg(feature = "mux")))]
+pub mod mux;
 mod registry;
 pub mod st0102;
 pub mod st0601;
@@ -117,6 +120,11 @@ mod time;
 mod value;
 
 pub use config::Config;
+/// The transport stream crate the [`mux`] module builds on (feature
+/// `mux`), re-exported so users get the same version.
+#[cfg(feature = "mux")]
+#[cfg_attr(docsrs, doc(cfg(feature = "mux")))]
+pub use mpegts;
 pub use error::Error;
 pub use stream::{au_cells, AuCell, AuCells, Decoder, Received, Stats};
 pub use time::{LeapSeconds, LeapSecondsError, MispTime, ParseUtcError, UtcDateTime};

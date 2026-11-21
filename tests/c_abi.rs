@@ -461,11 +461,16 @@ fn header_constants_match_rust() {
 
 /// Function names the header declares.
 fn header_functions() -> BTreeSet<String> {
-    let text = std::fs::read_to_string(root().join("include/misb.h")).unwrap();
+    declared_functions(&root().join("include/misb.h"), "misb_")
+}
+
+/// Function names starting with `prefix` that the header `path` declares.
+fn declared_functions(path: &Path, prefix: &str) -> BTreeSet<String> {
+    let text = std::fs::read_to_string(path).unwrap();
     let mut names = BTreeSet::new();
     for line in text.lines().filter(|l| !l.trim_start().starts_with(['#', '*', '/'])) {
         let mut rest = line;
-        while let Some(at) = rest.find("misb_") {
+        while let Some(at) = rest.find(prefix) {
             let tail = &rest[at..];
             let end = tail.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).unwrap_or(tail.len());
             if tail[end..].starts_with('(') {
@@ -499,6 +504,89 @@ fn exported_symbols_match_header() {
     let extra: Vec<_> = exported.difference(&declared).collect();
     assert!(missing.is_empty(), "declared in the header but not exported: {missing:?}");
     assert!(extra.is_empty(), "exported but not in the header: {extra:?}");
+}
+
+/// Defined text symbols of a library: dynamic symbols of a shared library,
+/// all global ones of a static library.
+fn defined_symbols(lib: &Path) -> BTreeSet<String> {
+    let mut nm = Command::new("nm");
+    nm.arg("--defined-only");
+    if lib.extension().map_or(false, |e| e == "so") {
+        nm.arg("-D");
+    }
+    let out = nm.arg(lib).output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    String::from_utf8(out.stdout)
+        .unwrap()
+        .lines()
+        .filter_map(|l| {
+            let mut f = l.split_whitespace().rev();
+            let (name, kind) = (f.next()?, f.next()?);
+            (kind == "T").then(|| name.trim_start_matches('_').to_string())
+        })
+        .collect()
+}
+
+/// With `mux`, the C library also exports the mpegts C API, so a C program
+/// that demuxes, muxes and decodes links one library (MUXING_PLAN.md
+/// section 3; two Rust static libraries cannot share one program). Both
+/// the shared and the static library export exactly what misb.h and the
+/// pinned mpegts's mpegts.h declare.
+#[cfg(feature = "mux")]
+#[test]
+fn mux_library_exports_the_mpegts_api() {
+    if !cfg!(target_os = "linux") || Command::new("nm").arg("--version").output().is_err() {
+        eprintln!("skipping: needs Linux and nm");
+        return;
+    }
+    let target = root().join("target/c-abi/mux");
+    let mut cargo = Command::new(env!("CARGO"));
+    cargo.current_dir(root()).args(["build", "--locked", "--offline", "--lib", "--features", "capi,mux", "--message-format=json"]);
+    let output = cargo.env("CARGO_TARGET_DIR", &target).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let mut libs = Vec::new();
+    for line in String::from_utf8(output.stdout).unwrap().lines() {
+        let message: serde_json::Value = serde_json::from_str(line).unwrap();
+        if message["target"]["name"] == "misb" {
+            for file in message["filenames"].as_array().into_iter().flatten() {
+                let path = PathBuf::from(file.as_str().unwrap());
+                if matches!(path.extension().and_then(|e| e.to_str()), Some("so" | "a")) {
+                    libs.push(path);
+                }
+            }
+        }
+    }
+    assert_eq!(libs.len(), 2, "shared and static library: {libs:?}");
+
+    // The mpegts checkout Cargo resolved, for its header.
+    let meta = Command::new(env!("CARGO"))
+        .current_dir(root())
+        .args(["metadata", "--locked", "--offline", "--format-version", "1", "--features", "mux"])
+        .output()
+        .unwrap();
+    assert!(meta.status.success(), "{}", String::from_utf8_lossy(&meta.stderr));
+    let meta: serde_json::Value = serde_json::from_slice(&meta.stdout).unwrap();
+    let manifest = meta["packages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["name"] == "mpegts")
+        .and_then(|p| p["manifest_path"].as_str())
+        .expect("mpegts in cargo metadata");
+    let mpegts_h = Path::new(manifest).parent().unwrap().join("include/mpegts.h");
+    let mut declared = header_functions();
+    let mpegts = declared_functions(&mpegts_h, "mpegts_");
+    assert!(mpegts.len() >= 60, "mpegts.h functions: {mpegts:?}");
+    declared.extend(mpegts);
+
+    for lib in libs {
+        let exported: BTreeSet<String> =
+            defined_symbols(&lib).into_iter().filter(|s| s.starts_with("misb_") || s.starts_with("mpegts_")).collect();
+        let missing: Vec<_> = declared.difference(&exported).collect();
+        let extra: Vec<_> = exported.difference(&declared).collect();
+        assert!(missing.is_empty(), "{}: declared but not exported: {missing:?}", lib.display());
+        assert!(extra.is_empty(), "{}: exported but not declared: {extra:?}", lib.display());
+    }
 }
 
 // ---------------------------------------------------------------- layout

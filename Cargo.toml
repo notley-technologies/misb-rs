@@ -26,7 +26,7 @@ default = ["capi"]
 ## Export the C ABI (decoder and encoder; implies `encode`, so the C
 ## library is one artifact). Rust consumers can disable default features
 ## to compile with unsafe code forbidden.
-capi = ["encode"]
+capi = ["encode", "mpegts?/capi"]
 ## `serde::Serialize` for the decoded types, errors and statistics, and
 ## `Serialize` and `Deserialize` for `Config`.
 serde = ["dep:serde"]
@@ -36,11 +36,19 @@ encode = []
 ## The NDJSON authoring format for the encoder (`misb::json`). Adds
 ## serde_json.
 json = ["encode", "serde", "dep:serde_json"]
+## Inserting KLV into transport streams (`misb::mux`): the scheduler that
+## maps MISP time to PTS and feeds the `mpegts` injector. Adds mpegts (with
+## its `mux` feature), re-exported as `misb::mpegts`. With `capi` too, the C
+## library also exports the mpegts C API, so a C program links one library.
+mux = ["encode", "dep:mpegts", "mpegts?/mux"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
 smpte-klv = { git = "https://github.com/notley-technologies/smpte-klv-rs", rev = "bc5346dd298fa061d6838f5b90ffbb952019dcd7" }
+# Pinned by rev like smpte-klv; move it together with any other user of
+# mpegts so Cargo builds one copy (MUXING_PLAN.md section 3).
+mpegts = { git = "https://github.com/notley-technologies/mpegts-rs", rev = "a48700dc6eba70722afda56e2e9d9f547f15f59d", default-features = false, optional = true }
 
 [dev-dependencies]
 serde_json = "1"
@@ -74,6 +82,14 @@ required-features = ["encode"]
 [[test]]
 name = "json"
 required-features = ["json"]
+
+[[test]]
+name = "mux_schedule"
+required-features = ["mux"]
+
+[[test]]
+name = "mux_file"
+required-features = ["mux"]
 
 [package.metadata.docs.rs]
 all-features = true

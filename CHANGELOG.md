@@ -12,6 +12,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - `MispTime`, `UtcDateTime` and `LeapSeconds`: MISB ST 0603.5 time with a dated leap second table (valid before 2027-07-01, IERS Bulletin C 72), 23:59:60, the 1970 to 1972 rate rule, and the tag 136 value.
 - The NDJSON authoring format, behind the `json` feature (adds `serde_json`): `misb::json::encode_line`, `parse_record`, `parse_decoded` (the decoder's own JSON back into a `Packet`), and `schema()`, committed as `docs/schema/st0601-authoring.schema.json`.
 - The `klvencode` example (NDJSON records or decoder JSON to packets; `--schema`).
+- Inserting metadata into transport streams, behind the `mux` feature (adds `mpegts`, pinned by revision and re-exported as `misb::mpegts`): `misb::mux::FileMux` (a metadata source scheduled into an input stream by the `mpegts` injector; `push`, `push_packet` for pre-timed input, `finish`), `Scheduler` (samples to timed units from the injected stream's frames and clock; explicit times or sampling at frames in presentation order; snapping; carrying the time line across clock discontinuities), `Anchor` and `PtsUnwrapper` (MISP time to PTS and back per st1402-time.md D-11, across the 2^33 wrap), `Sample` and `KlvSamples` (recorded `.klv` packets kept byte for byte; items to encode; NDJSON records via `From`), `Rate` and `RateLimiter`.
+- `make FEATURES=mux` builds a C library that also exports the mpegts C API, and installs `mpegts.h` next to `misb.h`; a test checks both libraries export exactly what the two headers declare.
 
 ### Changed
 

@@ -81,7 +81,7 @@ Only ST 0601 packets are decoded at top level. Packets with any other universal 
 
 | Standard | Revision followed | Where | Decoded as |
 |---|---|---|---|
-| MISB ST 0601 UAS Datalink Local Set | ST 0601.19 | top level | `Packet` of `Standard::St0601`: names and types for tags 1–143, checksum (tag 1) verified. Tag numbers are never reassigned, so packets from earlier revisions decode with the same table. |
+| MISB ST 0601 UAS Datalink Local Set | ST 0601.19 | top level | `Packet` of `Standard::St0601`: names and types for tags 1 to 143, checksum (tag 1) verified. Tag numbers are never reassigned, so packets from earlier revisions decode with the same table. |
 | MISB ST 0102 Security Metadata Local Set | ST 0102.12 | ST 0601 tag 48 | `Value::Set` of `Standard::St0102`; tags 15 to 21, deleted from the standard, still decode |
 | MISB ST 0806 Remote Video Terminal Local Set | ST 0806.4 | ST 0601 tag 73 | `Value::Set` of `Standard::St0806`, with its Point of Interest, Area of Interest and User Defined sets as `Value::Struct`s; its CRC is reported, not verified (ST 0601 leaves it out of the nested set) |
 | MISB ST 0903 VMTI Local Set | ST 0903.6, accepting ST 0903.5 data | ST 0601 tag 74 | `Value::Set` of `Standard::St0903`; the VTarget Series and the VMask, VObject, VFeature, VTracker, VChip, Algorithm and Ontology sets as `Value::List`s and `Value::Struct`s |
@@ -316,6 +316,37 @@ for out in demux.outputs() {
 
 A packet comes out on the push that completes it, so `out.pts` is the PTS of the PES packet that carried its last bytes. To recover the starting PTS, record each decoder's `stats().bytes` and `out.pts` before each push. Drain it with `next_received()` and find the latest recorded byte count at or before `Received::offset` for that PID and service.
 
+## Inserting into transport streams
+
+The `mux` feature (adds `mpegts` with its `mux` feature, re-exported as `misb::mpegts`) puts metadata into an existing transport stream. `FileMux` couples a scheduler that decides which metadata goes in with which PTS to the `mpegts` injector that places it, as synchronous (stream_type 0x15, ST 1402.2) or asynchronous (0x06, RP 217) KLV. Every input packet goes out unchanged except the PAT, the target PMT and the KLV PID.
+
+```rust ignore
+use misb::mux::{AnchorSpec, Carriage, FileMux, FileMuxConfig, KlvSamples, Rate};
+
+// A recorded .klv file: every packet goes in byte for byte at its own
+// tag 2 time, mapped to PTS through the anchor.
+let mut samples = KlvSamples::new();
+samples.push(&klv_file);
+samples.finish();
+let mut cfg = FileMuxConfig::new(Carriage::Sync);
+cfg.schedule.anchor = AnchorSpec::FirstFrame(first_frame_time); // or SourceStart, or Pts { pts, misp }
+let mut mux = FileMux::new(cfg, std::iter::from_fn(move || samples.next_sample()))?;
+let mut out = Vec::new();
+for chunk in input_ts.chunks(65_536) {
+    mux.push(chunk, &mut out)?;
+}
+let stats = mux.finish(&mut out)?;
+```
+
+- **Sources.** `Sample::packet` is a recorded packet, written unchanged: its tag 2 is never modified (st1402-time.md D-6). `Sample::items` holds items to encode; NDJSON authoring records convert with `Sample::from(record)` (feature `json`). Any iterator of samples works, so a tool can read a large file incrementally.
+- **Anchor.** One mapping between MISP time and the program clock: the first video frame at a given MISP time, the first frame at the first sample's time, or an explicit PTS and time. Conversions follow D-11 (PTS to MISP floors, MISP to PTS rounds to the nearest 90 kHz tick) and count across the 2^33 PTS wrap-around. A program clock discontinuity carries the time line across.
+- **Rate.** `Rate::Explicit` sends every sample at its own time (the only choice for recorded packets; `snap_to_frames` moves the PTS to the nearest frame without touching tag 2). `EveryFrame`, `EveryNthFrame(n)` and `Hz(f)` sample items at video frames in presentation order (B-frames are reordered), with tag 2 = the frame's MISP time and PTS = the frame's PTS, so the two agree exactly; a sample older than `max_hold_ms` is not repeated.
+- **Timing.** Units are handed to the injector `horizon_ms` ahead of the input's clock and placed in the ISO/IEC 13818-1 window, right before the frame they describe. Late samples are counted, never sent late.
+- **Pacing tools** time the input themselves and use `FileMux::push_packet(packet, clock, sink)`, so each output packet keeps the time of the input packet it came with.
+- **Constant bitrate.** `cfg.inject.with_rate(RateMode::Cbr { .. })` keeps the packet count and every PCR in place by filling null packets, and fails or drops loudly without room.
+
+The C library built with `capi` and `mux` (`make FEATURES=mux`) also exports the mpegts C API, demuxer and injector included, and `make install` puts `mpegts.h` next to `misb.h`, so a C program that demuxes, injects and decodes links one library.
+
 ## C API
 
 The header is [include/misb.h](include/misb.h). Its opening comment states the rules every function follows, and [examples/c/misb_dump.c](examples/c/misb_dump.c) shows the usual flow:
@@ -447,7 +478,7 @@ The stable runner saves a failing input under `target/fuzz-failures/`. Once it i
 
 ## Building
 
-The default `capi` feature exports ABI version 1. For a Rust-only build, set `default-features = false` on the `misb` dependency. Cargo then excludes the C adapter and the compiler forbids unsafe Rust throughout the decoder. The `serde` feature works in either build.
+Features: `capi` (default, the C ABI; implies `encode`), `encode` (the encoder, no extra dependencies), `json` (NDJSON authoring, adds serde_json), `serde`, and `mux` (inserting into transport streams, adds mpegts). The default `capi` feature exports ABI version 1. For a Rust-only build, set `default-features = false` on the `misb` dependency. Cargo then excludes the C adapter and the compiler forbids unsafe Rust throughout the decoder. The `serde` feature works in either build.
 
 The minimum supported Rust version is 1.70 for the library (`cargo check --lib`); the optional `serde` feature needs 1.71, the version its derive and proc-macro dependencies require.
 

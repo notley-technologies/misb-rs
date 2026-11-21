@@ -6,7 +6,10 @@
 #   sudo make uninstall
 #
 # PREFIX (default /usr/local), LIBDIR, INCLUDEDIR and DESTDIR are honoured,
-# as are CARGO and CARGO_FLAGS (e.g. CARGO_FLAGS=--offline). On macOS the
+# as are CARGO and CARGO_FLAGS (e.g. CARGO_FLAGS=--offline). FEATURES adds
+# Cargo features: FEATURES=mux builds a library that also exports the mpegts
+# C API and installs mpegts.h (from the pinned mpegts) next to misb.h, so a
+# C program that demuxes, muxes and decodes links only libmisb. On macOS the
 # install path is built into the library, so pass the same PREFIX/LIBDIR
 # to `make` and `make install`.
 #
@@ -24,11 +27,17 @@ CARGO       ?= cargo
 CARGO_FLAGS ?=
 PROFILE     ?= release
 TARGET_DIR  ?= target/c
+FEATURES    ?=
 
 VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
 ABI     := $(shell sed -n 's/^\#define MISB_ABI_VERSION \([0-9][0-9]*\).*/\1/p' include/misb.h)
 OUT     := $(TARGET_DIR)/$(if $(filter dev,$(PROFILE)),debug,$(PROFILE))
 SOURCES := Cargo.toml $(wildcard Cargo.lock) $(shell find src -name '*.rs')
+comma   := ,
+FEATURE_ARG := $(if $(strip $(FEATURES)),--features "$(FEATURES)")
+MUX     := $(filter mux,$(subst $(comma), ,$(FEATURES)))
+# mpegts.h of the mpegts that Cargo resolved, copied at build time.
+MPEGTS_H := $(OUT)/mpegts.h
 # FORCE when the goals include `all` (or there are none): see above.
 REBUILD := $(if $(filter all,$(or $(MAKECMDGOALS),all)),FORCE)
 
@@ -62,17 +71,23 @@ all: $(SHARED_LIB) $(STATIC_LIB)
 # Cargo may leave an up-to-date file untouched, hence the touch.
 $(SHARED_LIB): $(SOURCES) $(REBUILD)
 	@test -n "$(VERSION)" -a -n "$(ABI)" || { echo "cannot read the version from Cargo.toml and include/misb.h"; exit 1; }
-	$(CARGO) rustc --color never $(CARGO_FLAGS) --lib --profile $(PROFILE) --crate-type cdylib --target-dir $(TARGET_DIR) \
+	$(CARGO) rustc --color never $(CARGO_FLAGS) $(FEATURE_ARG) --lib --profile $(PROFILE) --crate-type cdylib --target-dir $(TARGET_DIR) \
 		-- -C link-arg=$(SONAME_ARG) -C strip=symbols
 	@touch $@
 
 $(STATIC_LIB): $(SOURCES) $(REBUILD)
 	@mkdir -p $(OUT)
-	$(CARGO) rustc --color never $(CARGO_FLAGS) --lib --profile $(PROFILE) --crate-type staticlib --target-dir $(TARGET_DIR) \
+	$(CARGO) rustc --color never $(CARGO_FLAGS) $(FEATURE_ARG) --lib --profile $(PROFILE) --crate-type staticlib --target-dir $(TARGET_DIR) \
 		-- --print native-static-libs 2> $(OUT)/staticlib.log || { cat $(OUT)/staticlib.log; exit 1; }
 	@sed -n 's/^note: native-static-libs: //p' $(OUT)/staticlib.log | tail -n 1 > $(NATIVE)
 	@test -s $(NATIVE) || { echo "rustc did not report the static library's system libraries"; exit 1; }
 	@touch $@
+ifneq ($(MUX),)
+	@dir=$$($(CARGO) metadata --color never --format-version 1 $(CARGO_FLAGS) $(FEATURE_ARG) | tr ',' '\n' \
+		| sed -n 's|.*"manifest_path":"\(.*\)/Cargo.toml".*|\1|p' | grep -m 1 mpegts); \
+		test -f "$$dir/include/mpegts.h" || { echo "cannot find mpegts.h of the mpegts dependency"; exit 1; }; \
+		cp "$$dir/include/mpegts.h" $(MPEGTS_H)
+endif
 
 install: all
 	install -d $(DESTDIR)$(LIBDIR) $(DESTDIR)$(INCLUDEDIR) $(DESTDIR)$(LIBDIR)/pkgconfig $(DESTDIR)$(CMAKE_DIR)
@@ -80,6 +95,7 @@ install: all
 	ln -sf $(SHARED) $(DESTDIR)$(LIBDIR)/$(LINK_NAME)
 	install -m 644 $(STATIC_LIB) $(DESTDIR)$(LIBDIR)/libmisb.a
 	install -m 644 include/misb.h $(DESTDIR)$(INCLUDEDIR)/misb.h
+	$(if $(MUX),install -m 644 $(MPEGTS_H) $(DESTDIR)$(INCLUDEDIR)/mpegts.h)
 	@echo "generating $(DESTDIR)$(LIBDIR)/pkgconfig/misb.pc and $(DESTDIR)$(CMAKE_DIR)/*.cmake"
 	@$(SUBST) c/misb.pc.in > $(DESTDIR)$(LIBDIR)/pkgconfig/misb.pc
 	@$(SUBST) c/misb-config.cmake.in > $(DESTDIR)$(CMAKE_DIR)/misb-config.cmake
@@ -88,6 +104,7 @@ install: all
 uninstall:
 	rm -f $(DESTDIR)$(LIBDIR)/$(SHARED) $(DESTDIR)$(LIBDIR)/$(LINK_NAME) $(DESTDIR)$(LIBDIR)/libmisb.a
 	rm -f $(DESTDIR)$(INCLUDEDIR)/misb.h $(DESTDIR)$(LIBDIR)/pkgconfig/misb.pc
+	$(if $(MUX),rm -f $(DESTDIR)$(INCLUDEDIR)/mpegts.h)
 	rm -f $(DESTDIR)$(CMAKE_DIR)/misb-config.cmake $(DESTDIR)$(CMAKE_DIR)/misb-config-version.cmake
 	-rmdir $(DESTDIR)$(CMAKE_DIR) 2>/dev/null
 
