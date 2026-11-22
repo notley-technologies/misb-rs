@@ -14,7 +14,7 @@ use crate::mux::{
 use crate::state::StalePolicy;
 use crate::st0601::Tag;
 use crate::MispTime;
-use mpegts::mux::{ExistingKlv, OnOverflow, ProgramSelect, RateMode};
+use mpegts::mux::{CellNumbering, ExistingKlv, OnOverflow, ProgramSelect, RateMode};
 use std::ffi::c_char;
 use std::mem;
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -70,6 +70,10 @@ pub const MISB_LIVE_CBR_DROP: u32 = 0x20;
 pub const MISB_LIVE_HAS_PID: u32 = 0x40;
 /// Use `service_id`.
 pub const MISB_LIVE_HAS_SERVICE_ID: u32 = 0x80;
+/// Number metadata cells from 0 in each access unit instead of one counter
+/// per stream: a workaround for receivers that require it, such as
+/// MediaMTX (DECISIONS X-8).
+pub const MISB_LIVE_CELLS_PER_AU: u32 = 0x100;
 
 /// Settings of a live injector.
 #[repr(C)]
@@ -222,6 +226,9 @@ fn config_of(c: &misb_live_config) -> Option<(LiveMuxConfig, Option<Duration>, S
     }
     if c.psi_interval_ms != 0 {
         inject = inject.with_psi_interval_ms(c.psi_interval_ms);
+    }
+    if c.flags & MISB_LIVE_CELLS_PER_AU != 0 {
+        inject.sync.cell_numbering = CellNumbering::PerAccessUnit;
     }
     cfg.inject = inject;
     let max_age = (c.max_age_us != 0).then(|| Duration::from_micros(c.max_age_us));
@@ -587,5 +594,14 @@ mod tests {
             assert!(live.is_null());
             assert_eq!(misb_live_push(ptr::null_mut(), ptr::null(), 0, 0, None, ptr::null_mut()), MISB_ERR_NULL);
         }
+    }
+
+    #[test]
+    fn cells_are_numbered_per_stream_unless_asked() {
+        let (cfg, _, _) = config_of(&default_config()).unwrap();
+        assert_eq!(cfg.inject.sync.cell_numbering, CellNumbering::PerStream);
+        let per_au = misb_live_config { flags: MISB_LIVE_CELLS_PER_AU, ..default_config() };
+        let (cfg, _, _) = config_of(&per_au).unwrap();
+        assert_eq!(cfg.inject.sync.cell_numbering, CellNumbering::PerAccessUnit);
     }
 }

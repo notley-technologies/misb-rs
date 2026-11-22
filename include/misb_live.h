@@ -66,6 +66,8 @@ typedef struct misb_live misb_live; /* opaque */
 #define MISB_LIVE_CBR_DROP 0x20       /* with CBR, drop units without room instead of failing */
 #define MISB_LIVE_HAS_PID 0x40        /* use pid for the KLV stream (else a free one) */
 #define MISB_LIVE_HAS_SERVICE_ID 0x80 /* use service_id (else the lowest free one) */
+#define MISB_LIVE_CELLS_PER_AU 0x100  /* number cells from 0 in each access unit, not per stream:
+                                       * a workaround for receivers such as MediaMTX (X-8) */
 
 /* Settings. Fill with misb_live_config_default, then change fields. */
 typedef struct misb_live_config {

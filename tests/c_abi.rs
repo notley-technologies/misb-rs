@@ -655,11 +655,10 @@ fn live_header_layout_matches() {
                 let at = unsafe { std::ptr::addr_of!((*base).$f) } as usize - base as usize;
                 rust.push(format!("L {}.{} {at}", stringify!($t), stringify!($f)));
             )*
-            c.push_str("    return 0;\n}\n");
             (c, rust)
         }};
     }
-    let (source, rust) = live_fields!(
+    let (mut source, mut rust) = live_fields!(
         misb_live_config.carriage, misb_live_config.flags, misb_live_config.rate, misb_live_config.rate_value,
         misb_live_config.anchor, misb_live_config.timestamps, misb_live_config.anchor_pts,
         misb_live_config.anchor_misp_us, misb_live_config.max_age_us, misb_live_config.program,
@@ -667,6 +666,21 @@ fn live_header_layout_matches() {
         misb_live_config.psi_interval_ms, misb_live_counters.packets_in, misb_live_counters.held_packets,
         misb_live_counters.timestamps_written, misb_live_counters.psi_packets,
     );
+    for (name, value) in [
+        ("MISB_LIVE_VIDEO_ANCHOR", MISB_LIVE_VIDEO_ANCHOR),
+        ("MISB_LIVE_LOCKED", MISB_LIVE_LOCKED),
+        ("MISB_LIVE_NANOSECONDS", MISB_LIVE_NANOSECONDS),
+        ("MISB_LIVE_STALE_UNKNOWN", MISB_LIVE_STALE_UNKNOWN),
+        ("MISB_LIVE_CBR", MISB_LIVE_CBR),
+        ("MISB_LIVE_CBR_DROP", MISB_LIVE_CBR_DROP),
+        ("MISB_LIVE_HAS_PID", MISB_LIVE_HAS_PID),
+        ("MISB_LIVE_HAS_SERVICE_ID", MISB_LIVE_HAS_SERVICE_ID),
+        ("MISB_LIVE_CELLS_PER_AU", MISB_LIVE_CELLS_PER_AU),
+    ] {
+        source.push_str(&format!("    printf(\"C {name} %u\\n\", (unsigned){name});\n"));
+        rust.push(format!("C {name} {value}"));
+    }
+    source.push_str("    return 0;\n}\n");
     let dir = std::env::temp_dir().join(format!("misb-live-layout-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let (src, exe) = (dir.join("layout.c"), dir.join("layout"));

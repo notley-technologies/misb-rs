@@ -84,7 +84,7 @@ dependencies = [
 [[package]]
 name = "mpegts"
 version = "0.2.0"
-source = "git+https://github.com/notley-technologies/mpegts-rs?rev=c0770e64e623d2b8cc04b704bdf81b702adfbb85#c0770e64e623d2b8cc04b704bdf81b702adfbb85"
+source = "git+https://github.com/notley-technologies/mpegts-rs?rev=79861e330b35d92637818d598b894ea2dfd7215d#79861e330b35d92637818d598b894ea2dfd7215d"
 
 [[package]]
 name = "proc-macro2"

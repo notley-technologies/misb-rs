@@ -48,7 +48,7 @@ serde_json = { version = "1", optional = true }
 smpte-klv = { git = "https://github.com/notley-technologies/smpte-klv-rs", rev = "bc5346dd298fa061d6838f5b90ffbb952019dcd7" }
 # Pinned by rev like smpte-klv; move it together with any other user of
 # mpegts so Cargo builds one copy (MUXING_PLAN.md section 3).
-mpegts = { git = "https://github.com/notley-technologies/mpegts-rs", rev = "c0770e64e623d2b8cc04b704bdf81b702adfbb85", default-features = false, optional = true }
+mpegts = { git = "https://github.com/notley-technologies/mpegts-rs", rev = "79861e330b35d92637818d598b894ea2dfd7215d", default-features = false, optional = true }
 
 [dev-dependencies]
 serde_json = "1"
